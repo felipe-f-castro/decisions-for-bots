@@ -1,0 +1,266 @@
+{
+  "projectId": "decisions",
+  "endpoint": "https://nyc.cloud.appwrite.io/v1",
+  "sites": [
+    {
+      "$id": "decisions-app",
+      "name": "Decisions",
+      "enabled": true,
+      "logging": true,
+      "framework": "nextjs",
+      "timeout": 30,
+      "installCommand": "npm ci",
+      "buildCommand": "npm run build",
+      "outputDirectory": "./.next",
+      "path": ".",
+      "scopes": [
+        "users.read",
+        "users.write",
+        "sessions.write",
+        "databases.read",
+        "tables.read",
+        "rows.read",
+        "rows.write",
+        "files.read",
+        "files.write",
+        "tokens.write",
+        "project.write",
+        "project.policies.write"
+      ],
+      "buildRuntime": "node-22",
+      "adapter": "ssr",
+      "runtime": "node-22",
+      "buildSpecification": "s-2vcpu-2gb",
+      "specification": "s-0.5vcpu-512mb"
+    }
+  ],
+  "tablesDB": [
+    {
+      "$id": "inbox",
+      "name": "Inbox",
+      "enabled": true
+    }
+  ],
+  "tables": [
+    {
+      "$id": "decisions",
+      "name": "decisions",
+      "databaseId": "inbox",
+      "enabled": true,
+      "rowSecurity": false,
+      "permissions": [],
+      "columns": [
+        {
+          "key": "question",
+          "type": "string",
+          "size": 240,
+          "required": true,
+          "array": false
+        },
+        {
+          "key": "context",
+          "type": "string",
+          "size": 4000,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "options",
+          "type": "string",
+          "size": 200,
+          "required": false,
+          "array": true
+        },
+        {
+          "key": "area",
+          "type": "string",
+          "size": 40,
+          "required": true,
+          "array": false
+        },
+        {
+          "key": "waiting_on",
+          "type": "string",
+          "size": 100,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "deadline",
+          "type": "datetime",
+          "required": false,
+          "array": false
+        },
+        {
+          "key": "status",
+          "type": "string",
+          "format": "enum",
+          "elements": [
+            "open",
+            "answered",
+            "routed"
+          ],
+          "required": true,
+          "array": false
+        },
+        {
+          "key": "answer",
+          "type": "string",
+          "size": 2000,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "custom_answer",
+          "type": "string",
+          "size": 2000,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "answered_at",
+          "type": "datetime",
+          "required": false,
+          "array": false
+        },
+        {
+          "key": "version",
+          "type": "integer",
+          "required": true,
+          "array": false,
+          "min": 1,
+          "max": 9007199254740991
+        },
+        {
+          "key": "image_paths",
+          "type": "string",
+          "size": 220,
+          "required": false,
+          "array": true
+        }
+      ],
+      "indexes": [
+        {
+          "$id": "status_created",
+          "type": "key",
+          "attributes": [
+            "status",
+            "$createdAt"
+          ]
+        }
+      ]
+    },
+    {
+      "$id": "settings",
+      "name": "settings",
+      "databaseId": "inbox",
+      "enabled": true,
+      "rowSecurity": false,
+      "permissions": [],
+      "columns": [
+        {
+          "key": "owner_user_id",
+          "type": "string",
+          "size": 36,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "owner_email",
+          "type": "string",
+          "format": "email",
+          "required": false,
+          "array": false
+        },
+        {
+          "key": "areas",
+          "type": "string",
+          "size": 40,
+          "required": false,
+          "array": true
+        },
+        {
+          "key": "agent_api_key_hash",
+          "type": "string",
+          "size": 64,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "webhook_url",
+          "type": "string",
+          "size": 2048,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "webhook_secret",
+          "type": "string",
+          "size": 256,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "setup_complete",
+          "type": "boolean",
+          "required": true,
+          "array": false
+        }
+      ],
+      "indexes": []
+    },
+    {
+      "$id": "allowed_emails",
+      "name": "allowed_emails",
+      "databaseId": "inbox",
+      "enabled": true,
+      "rowSecurity": false,
+      "permissions": [],
+      "columns": [
+        {
+          "key": "email",
+          "type": "string",
+          "format": "email",
+          "required": true,
+          "array": false
+        }
+      ],
+      "indexes": [
+        {
+          "$id": "email_unique",
+          "type": "unique",
+          "attributes": [
+            "email"
+          ]
+        }
+      ]
+    }
+  ],
+  "buckets": [
+    {
+      "$id": "decision-images",
+      "name": "decision-images",
+      "enabled": true,
+      "maximumFileSize": 3145728,
+      "allowedFileExtensions": [
+        "jpg",
+        "jpeg",
+        "png",
+        "webp",
+        "gif"
+      ],
+      "encryption": false,
+      "antivirus": false,
+      "fileSecurity": false,
+      "permissions": []
+    }
+  ]
+}

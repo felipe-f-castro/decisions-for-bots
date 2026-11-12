@@ -1,0 +1,33 @@
+node_modules/
+.next/
+.cache/
+.env*
+!.env.example
+coverage/
+*.tsbuildinfo
+.vercel/
+codex.log
+test-results/
+.playwright-mcp/
+.playwright-cli/
+
+# Local instructions, prompts, logs, and generated review artifacts
+AGENTS.md
+DESAFIOS.md
+PROMPT.md
+PROMPT2.md
+PROMPT*.md
+codex*.log
+output/
+.DS_Store
+supabase/.temp/
+supabase/.branches/
+.vercel
+
+# Appwrite CLI session and local credentials
+.appwrite/
+.appwrite
+credentials/
+*.pem
+
+SUMMARY.md
