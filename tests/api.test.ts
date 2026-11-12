@@ -59,6 +59,7 @@ describe("authenticated decision API", () => {
     expect(response.headers.get("cache-control")).toContain("no-store");
     const data = await response.json();
     expect(data.mode).toBe("demo");
+    expect(data.webhookHealth).toBeNull();
     expect(data.decisions).toHaveLength(4);
     expect(data.decisions[0].question).toBe("When should we schedule the team workshop?");
   });
@@ -85,7 +86,9 @@ describe("authenticated decision API", () => {
       expectedRevision: decision.revision,
     });
     expect(first.status).toBe(200);
-    const saved = (await first.json()).decision;
+    const firstBody = await first.json();
+    expect(firstBody.webhookHealth).toBeNull();
+    const saved = firstBody.decision;
     const staleUndo = await patch({ action: "reopen", expectedRevision: decision.revision });
     expect(staleUndo.status).toBe(409);
     const changed = (

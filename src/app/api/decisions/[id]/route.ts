@@ -3,6 +3,7 @@ import { parseMutation, validateDecisionId } from "@/lib/domain";
 import { apiError, authorize, json, readJson } from "@/lib/http";
 import { getStore } from "@/lib/store";
 import { notifyDecisionAnswered } from "@/lib/answer-webhook";
+import { readPublicWebhookHealth } from "@/lib/webhook-health";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,7 +30,7 @@ export async function PATCH(request: NextRequest, context: Context) {
     const mutation = parseMutation(await readJson(request));
     const decision = await getStore().mutate(id, mutation);
     if (mutation.action === "answer") await notifyDecisionAnswered(decision);
-    return json({ decision });
+    return json({ decision, webhookHealth: await readPublicWebhookHealth() });
   } catch (error) {
     return apiError(error);
   }

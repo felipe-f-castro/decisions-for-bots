@@ -60,6 +60,7 @@ export function Dashboard({
   webhookHealth?: PublicWebhookHealth | null;
 }) {
   const [decisions, setDecisions] = useState<Decision[]>(initialDecisions ?? []);
+  const [notifications, setNotifications] = useState<PublicWebhookHealth | null>(webhookHealth);
   const [loading, setLoading] = useState(!initialDecisions);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(initialError);
@@ -80,9 +81,13 @@ export function Dashboard({
     const currentRevision = revision.current;
     if (manual) setRefreshing(true);
     try {
-      const data = await api<{ decisions: Decision[] }>("/api/decisions");
+      const data = await api<{
+        decisions: Decision[];
+        webhookHealth: PublicWebhookHealth | null;
+      }>("/api/decisions");
       if (revision.current === currentRevision) {
         setDecisions(data.decisions);
+        setNotifications(data.webhookHealth);
         setError("");
       }
     } catch (failure) {
@@ -134,12 +139,18 @@ export function Dashboard({
     setBusy(new Set(mutations.current));
     setError("");
     try {
-      const { decision } = await api<{ decision: Decision }>(`/api/decisions/${id}`, {
+      const data = await api<{
+        decision: Decision;
+        webhookHealth: PublicWebhookHealth | null;
+      }>(`/api/decisions/${id}`, {
         method: "PATCH",
         body: JSON.stringify(mutation),
       });
-      setDecisions((current) => current.map((item) => (item.id === decision.id ? decision : item)));
-      return decision;
+      setDecisions((current) =>
+        current.map((item) => (item.id === data.decision.id ? data.decision : item)),
+      );
+      setNotifications(data.webhookHealth);
+      return data.decision;
     } finally {
       mutations.current.delete(id);
       revision.current += 1;
@@ -419,8 +430,8 @@ export function Dashboard({
               <span>Try it freely. This inbox is public and resets when the server restarts.</span>
             </div>
           )}
-          {webhookHealth && (
-            <WebhookStatus key={webhookHealthKey(webhookHealth)} health={webhookHealth} compact />
+          {notifications && (
+            <WebhookStatus key={webhookHealthKey(notifications)} health={notifications} compact />
           )}
           <div className="page-heading">
             <div className="heading-copy">
