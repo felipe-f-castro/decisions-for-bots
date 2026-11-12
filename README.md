@@ -98,7 +98,7 @@ Bots should only need a new base URL after you cut over. The paths, JSON bodies,
 - Create a decision: `POST /api/agent/decisions` with JSON (`question`, `area`, optional `context`, `options`, `waitingOn`, `deadline`, `imageUrls`) or multipart (`decision` JSON plus `images` files).
 - List or read: `GET /api/agent/decisions`, `GET /api/agent/decisions/:id`.
 - Mark an answered card as picked up: `POST /api/agent/decisions/:id/route` with `{ "expectedRevision": "<revision>" }`.
-- Webhook event: `decision.answered`. Headers: `X-Decisions-Event`, `X-Decisions-Signature: sha256=<hex>`, `Authorization: Bearer <webhook secret>`. The destination must be public HTTPS with no credentials. Delivery is attempted twice, with a 3 second timeout, and never follows redirects. The connection uses the address that passed that check. Demo mode does not deliver.
+- Webhook event: `decision.answered`. Headers: `X-Decisions-Event`, `X-Decisions-Signature: sha256=<hex>`, `Authorization: Bearer <webhook secret>`. The destination must be public HTTPS with no credentials. Delivery is attempted twice. Each attempt, including name lookup, is limited to 3 seconds and never follows redirects. The connection uses the address that passed that check. Demo mode does not deliver.
 
 See [docs/install-for-bots.md](docs/install-for-bots.md) for step-by-step install instructions written for an AI assistant (create the project, set the API key and env, push schema, deploy the Site, create the generated domain, run `/setup`, connect the agent API and webhook, and run the test).
 

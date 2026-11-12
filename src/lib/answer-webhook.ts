@@ -54,7 +54,6 @@ export async function notifyDecisionAnswered(decision: Decision): Promise<void> 
       );
       return;
     }
-    const target = await resolvePublicWebhook(url);
     const body = answerWebhookPayload(decision);
     const headers = {
       "Content-Type": "application/json",
@@ -62,7 +61,7 @@ export async function notifyDecisionAnswered(decision: Decision): Promise<void> 
       "X-Decisions-Signature": signAnswerWebhook(body, secret),
       Authorization: `Bearer ${secret}`,
     };
-    await deliverAnswerWebhook(target, body, headers, decision.id);
+    await deliverAnswerWebhook(url, body, headers, decision.id);
   } catch {
     // Configuration or delivery errors must not turn a saved answer into an API error.
     console.warn("[Decisions] Answer webhook could not be delivered.");
@@ -105,16 +104,18 @@ function postWebhook(
 }
 
 async function deliverAnswerWebhook(
-  target: ResolvedWebhook,
+  webhookUrl: string,
   body: string,
   headers: Record<string, string>,
   decisionId: string,
 ): Promise<void> {
-  // Two attempts, three seconds each, no redirects. The socket connects to the
-  // address that passed the public-internet check.
+  // Two attempts. Name lookup and the socket share one three-second deadline,
+  // and redirects are not followed. The socket uses an address that passed the check.
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const signal = AbortSignal.timeout(TIMEOUT_MS);
     try {
-      const status = await postWebhook(target, body, headers, AbortSignal.timeout(TIMEOUT_MS));
+      const target = await resolvePublicWebhook(webhookUrl, undefined, signal);
+      const status = await postWebhook(target, body, headers, signal);
       if (status >= 200 && status < 300) return;
       console.warn("[Decisions] Answer webhook returned a non-success status.", {
         decisionId,

@@ -1,5 +1,5 @@
 import "server-only";
-import { AppError } from "./domain";
+import { AppError, isAppError } from "./domain";
 
 /**
  * Process-local attempt limiter. It runs before admin-key session and account
@@ -21,6 +21,54 @@ export const SETUP_TOKEN_LIMIT = 5;
 export const SETUP_TOKEN_WINDOW_MS = 15 * 60 * 1000;
 
 const WAIT = "Too many sign-in attempts. Wait a few minutes and try again.";
+
+const TRANSPORT_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ECONNABORTED",
+  "ETIMEDOUT",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+
+function statusCode(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "number" ? code : undefined;
+}
+
+function transportCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/**
+ * True when the identity provider failed or the connection failed. Those
+ * attempts are released so a short outage does not use up the sign-in allowance.
+ * A rejected credential keeps its reservation.
+ */
+export function releasesLoginReservation(error: unknown, depth = 0): boolean {
+  if (depth > 3) return false;
+  if (isAppError(error)) return error.status >= 500;
+  const status = statusCode(error);
+  if (status !== undefined) return status >= 500;
+  const code = transportCode(error);
+  if (code && TRANSPORT_CODES.has(code)) return true;
+  if (error instanceof Error) {
+    if (error.name === "TimeoutError" || error.name === "AbortError") return true;
+    if (/fetch failed|socket hang up|network/i.test(error.message)) return true;
+  }
+  const cause =
+    error && typeof error === "object" ? (error as { cause?: unknown }).cause : undefined;
+  return Boolean(cause && cause !== error && releasesLoginReservation(cause, depth + 1));
+}
 
 export function resetAuthThrottles() {
   buckets.clear();

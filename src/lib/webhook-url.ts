@@ -8,6 +8,9 @@ import { isPublicAddress } from "./images";
 export const WEBHOOK_URL_ERROR =
   "Use an HTTPS webhook URL on the public internet, without credentials.";
 
+/** DNS for a delivery attempt shares that attempt's deadline. */
+export const WEBHOOK_LOOKUP_TIMEOUT_MS = 3_000;
+
 export type ResolvedWebhook = {
   url: URL;
   address: string;
@@ -41,18 +44,57 @@ export function webhookUrlError(value: string): string | null {
   return null;
 }
 
+function lookupWithin(resolver: typeof lookup, host: string, signal?: AbortSignal) {
+  const controller = new AbortController();
+  const timer = signal
+    ? undefined
+    : setTimeout(
+        () => controller.abort(new DOMException("timeout", "TimeoutError")),
+        WEBHOOK_LOOKUP_TIMEOUT_MS,
+      );
+  const onParent = () => controller.abort(signal?.reason);
+  if (signal) {
+    if (signal.aborted) controller.abort(signal.reason);
+    else signal.addEventListener("abort", onParent, { once: true });
+  }
+  const stop = () => {
+    if (timer) clearTimeout(timer);
+    signal?.removeEventListener("abort", onParent);
+  };
+  return new Promise<LookupAddress[]>((resolve, reject) => {
+    const finish = (error?: unknown, addresses?: LookupAddress[]) => {
+      stop();
+      controller.signal.removeEventListener("abort", onAbort);
+      if (error) reject(error);
+      else resolve(addresses ?? []);
+    };
+    const onAbort = () => finish(controller.signal.reason ?? new Error("timeout"));
+    if (controller.signal.aborted) return onAbort();
+    controller.signal.addEventListener("abort", onAbort, { once: true });
+    resolver(host, { all: true, verbatim: true }).then(
+      (addresses) => {
+        if (controller.signal.aborted) finish(controller.signal.reason);
+        else finish(undefined, addresses);
+      },
+      (error) => finish(error),
+    );
+  });
+}
+
 export async function resolvePublicWebhook(
   value: string,
   resolver: typeof lookup = lookup,
+  signal?: AbortSignal,
 ): Promise<ResolvedWebhook> {
   if (webhookUrlError(value)) throw new AppError(WEBHOOK_URL_ERROR);
   const url = new URL(value);
   const host = hostName(url);
   let addresses: LookupAddress[];
+  if (signal?.aborted) throw new AppError(WEBHOOK_URL_ERROR);
   if (isIP(host)) addresses = [{ address: host, family: isIP(host) as 4 | 6 }];
   else {
     try {
-      addresses = await resolver(host, { all: true, verbatim: true });
+      addresses = await lookupWithin(resolver, host, signal);
     } catch {
       throw new AppError(WEBHOOK_URL_ERROR);
     }

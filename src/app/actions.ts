@@ -18,7 +18,7 @@ import {
 } from "@/lib/appwrite/session";
 import { isAppError, parseAreas } from "@/lib/domain";
 import { PASSWORD_MAX_BYTES, PASSWORD_MIN_LENGTH, passwordBytes } from "@/lib/password";
-import { assertLoginAllowed } from "@/lib/throttle";
+import { assertLoginAllowed, releasesLoginReservation } from "@/lib/throttle";
 import { WEBHOOK_URL_ERROR, resolvePublicWebhook } from "@/lib/webhook-url";
 
 export type LoginState = { error?: string; sent?: boolean } | null;
@@ -76,7 +76,7 @@ export async function signInWithPassword(
     if (isAppError(error) && error.status === 429) return { error: error.message };
     if (/rate limit|too many/i.test(message))
       return { error: "Too many sign-in attempts. Wait a few minutes and try again." };
-    if (isAppError(error) && error.status >= 500) {
+    if (releasesLoginReservation(error)) {
       gate.cancel();
       return { error: "Sign-in is temporarily unavailable. Please try again shortly." };
     }

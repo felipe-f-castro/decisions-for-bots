@@ -288,6 +288,14 @@ describe("setup lock", () => {
     expect(users.updatePassword).not.toHaveBeenCalled();
     expect(state.row?.setup_complete).not.toBe(true);
 
+    account.createEmailPasswordSession.mockRejectedValueOnce(
+      Object.assign(new Error("Server Error"), { code: 503 }),
+    );
+    await expect(
+      completeSetup({ ...input, currentPassword: "current password" }),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(state.row?.setup_complete).not.toBe(true);
+
     const done = await completeSetup({ ...input, currentPassword: "current password" });
     expect(users.updatePassword).not.toHaveBeenCalled();
     expect(users.create).not.toHaveBeenCalled();
