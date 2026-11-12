@@ -266,6 +266,24 @@ describe("outbound answer webhook", () => {
     },
   );
 
+  it("does not wait on a stalled DNS lookup past the delivery deadline", async () => {
+    const controllers: AbortController[] = [];
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {
+      const controller = new AbortController();
+      controllers.push(controller);
+      return controller.signal;
+    });
+    vi.mocked(lookup).mockImplementation(() => new Promise(() => {}) as never);
+    const pending = answer();
+    await vi.waitFor(() => expect(controllers).toHaveLength(1));
+    controllers[0].abort(new DOMException("Fixture timeout", "TimeoutError"));
+    await vi.waitFor(() => expect(controllers).toHaveLength(2));
+    controllers[1].abort(new DOMException("Fixture timeout", "TimeoutError"));
+    expect((await pending).status).toBe(200);
+    expect(httpsRequest).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("uses a fresh three-second abort signal for each attempt and tolerates both timeouts", async () => {
     const controllers: AbortController[] = [];
     const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => {

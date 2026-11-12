@@ -134,6 +134,32 @@ describe("password sign-in", () => {
     ).toEqual({ error: "Too many sign-in attempts. Wait a few minutes and try again." });
   });
 
+  it("releases the sign-in allowance when the identity provider fails", async () => {
+    const unavailable = { error: "Sign-in is temporarily unavailable. Please try again shortly." };
+    const fields = form({ email: "owner@example.com", password: "correct horse" });
+    account.createEmailPasswordSession.mockRejectedValue(
+      Object.assign(new Error("Server Error"), { code: 503 }),
+    );
+    for (let attempt = 0; attempt < 6; attempt++)
+      expect(await signInWithPassword(null, fields)).toEqual(unavailable);
+    account.createEmailPasswordSession.mockRejectedValue(
+      new Error("fetch failed", {
+        cause: Object.assign(new Error("connect"), { code: "ECONNREFUSED" }),
+      }),
+    );
+    expect(await signInWithPassword(null, fields)).toEqual(unavailable);
+    expect(account.createEmailPasswordSession).toHaveBeenCalledTimes(7);
+    account.createEmailPasswordSession.mockRejectedValue(
+      Object.assign(new Error("Invalid credentials"), { code: 401 }),
+    );
+    for (let attempt = 0; attempt < 5; attempt++)
+      expect(await signInWithPassword(null, fields)).toEqual(BAD);
+    expect(await signInWithPassword(null, fields)).toEqual({
+      error: "Too many sign-in attempts. Wait a few minutes and try again.",
+    });
+    expect(account.createEmailPasswordSession).toHaveBeenCalledTimes(12);
+  });
+
   it("stops calling the admin session client after repeated failures", async () => {
     account.createEmailPasswordSession.mockRejectedValue(new Error("Invalid credentials"));
     const fields = form({ email: "owner@example.com", password: "wrong password" });

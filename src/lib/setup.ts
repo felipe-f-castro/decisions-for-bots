@@ -12,6 +12,7 @@ import {
   assertAccountCreationAllowed,
   assertLoginAllowed,
   assertSetupTokenAttemptAllowed,
+  releasesLoginReservation,
 } from "./throttle";
 import { resolvePublicWebhook, webhookUrlError } from "./webhook-url";
 
@@ -225,26 +226,39 @@ async function ensureOwnerUser(
       );
     const gate = await assertLoginAllowed(input.email);
     const account = new Account(client);
-    const session = await account
-      .createEmailPasswordSession({
+    let session;
+    try {
+      session = await account.createEmailPasswordSession({
         email: input.email,
         password: input.currentPassword,
-      })
-      .catch(() => null);
-    if (!session) throw new AppError("The current password is incorrect.", 401);
+      });
+    } catch (error) {
+      if (releasesLoginReservation(error)) {
+        gate.cancel();
+        throw new AppError("Sign-in is temporarily unavailable. Please try again shortly.", 503);
+      }
+      throw new AppError("The current password is incorrect.", 401);
+    }
     try {
-      if (!session.secret)
-        throw new AppError("Enter the current password for this Appwrite account.", 401);
+      if (!session.secret) {
+        gate.cancel();
+        throw new AppError("Sign-in is temporarily unavailable. Please try again shortly.", 503);
+      }
       if (input.password !== input.currentPassword) {
         const config = getConfig();
         const userClient = new Client()
           .setEndpoint(config.endpoint)
           .setProject(config.projectId)
           .setSession(session.secret);
-        await new Account(userClient).updatePassword({
-          password: input.password,
-          oldPassword: input.currentPassword,
-        });
+        try {
+          await new Account(userClient).updatePassword({
+            password: input.password,
+            oldPassword: input.currentPassword,
+          });
+        } catch (error) {
+          if (releasesLoginReservation(error)) gate.cancel();
+          throw error;
+        }
       }
       gate.cancel();
     } finally {

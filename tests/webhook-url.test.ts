@@ -44,4 +44,16 @@ describe("public webhook destinations", () => {
       /public internet/,
     );
   });
+
+  it("stops waiting when DNS does not answer before the deadline", async () => {
+    vi.mocked(lookup).mockImplementation(() => new Promise(() => {}) as never);
+    const controller = new AbortController();
+    const pending = resolvePublicWebhook(
+      "https://hooks.example/decisions",
+      lookup,
+      controller.signal,
+    );
+    controller.abort();
+    await expect(pending).rejects.toThrow(/public internet/);
+  });
 });
