@@ -193,8 +193,8 @@ async function takeOverClaim(
       503,
     );
   if (row.setup_complete) throw new AppError(ALREADY_OWNED, 409);
-  if (row.owner_email && row.owner_email.toLowerCase() !== email)
-    throw new AppError("Setup was started with a different email.", 409);
+  // An in-progress claim stays with whoever holds it. An expired or released
+  // claim can be taken, including with a different email.
   if (claimIsActive(row)) throw new AppError(IN_PROGRESS, 409);
   const updated = await casSettings(tables, row.setup_claim || "", {
     setup_claim: claim,
@@ -208,6 +208,14 @@ async function releaseClaim(tables: TablesDB, claim: string) {
   await casSettings(tables, claim, {
     setup_claim: "",
     setup_claim_until: new Date(0).toISOString(),
+    owner_email: "",
+  });
+}
+
+function warnSessionCleanup(error: unknown) {
+  const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+  console.warn("[Decisions] Setup could not delete its verification session.", {
+    ...(typeof code === "number" ? { code } : {}),
   });
 }
 
@@ -262,7 +270,11 @@ async function ensureOwnerUser(
       }
       gate.cancel();
     } finally {
-      if (session.$id) await account.deleteSession({ sessionId: session.$id }).catch(() => {});
+      if (session.$id) {
+        await users
+          .deleteSession({ userId: found.$id, sessionId: session.$id })
+          .catch(warnSessionCleanup);
+      }
     }
     await users
       .updateEmailVerification({ userId: found.$id, emailVerification: true })

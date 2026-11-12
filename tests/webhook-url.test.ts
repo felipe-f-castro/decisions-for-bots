@@ -45,6 +45,24 @@ describe("public webhook destinations", () => {
     );
   });
 
+  it("rejects unique-local and link-local IPv6, including mixed answers", async () => {
+    for (const address of ["fd00::1", "fc00::2", "fe80::1"]) {
+      vi.mocked(lookup).mockResolvedValue([{ address, family: 6 }] as never);
+      await expect(resolvePublicWebhook("https://hooks.example/decisions")).rejects.toThrow(
+        /public internet/,
+      );
+    }
+    for (const privateAddress of ["fd12:3456:789a::1", "fe80::abcd"]) {
+      vi.mocked(lookup).mockResolvedValue([
+        { address: "2001:4860:4860::8888", family: 6 },
+        { address: privateAddress, family: 6 },
+      ] as never);
+      await expect(resolvePublicWebhook("https://hooks.example/decisions")).rejects.toThrow(
+        /public internet/,
+      );
+    }
+  });
+
   it("stops waiting when DNS does not answer before the deadline", async () => {
     vi.mocked(lookup).mockImplementation(() => new Promise(() => {}) as never);
     const controller = new AbortController();
