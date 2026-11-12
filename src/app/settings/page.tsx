@@ -2,9 +2,12 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Brand } from "@/components/brand";
 import { SettingsForm } from "@/components/settings-form";
+import { WebhookStatus } from "@/components/webhook-status";
 import { getAccess } from "@/lib/auth";
 import { getSettings } from "@/lib/appwrite/settings";
 import { DEFAULT_AREAS } from "@/lib/domain";
+import { webhookHealthKey } from "@/lib/webhook-instructions";
+import { readPublicWebhookHealth } from "@/lib/webhook-health";
 
 export const dynamic = "force-dynamic";
 
@@ -26,11 +29,16 @@ export default async function SettingsPage() {
     );
   }
   const settings = await getSettings();
+  const health = await readPublicWebhookHealth();
   return (
-    <main className="error-page password-page">
+    <main className="error-page password-page settings-page">
       <Brand />
       <h1>Workspace settings.</h1>
-      <p>Update the areas shown in the inbox and the URL that receives answered-decision webhooks.</p>
+      <p>
+        Update the areas shown in the inbox, and check whether answer notifications are actually
+        being delivered.
+      </p>
+      {health && <WebhookStatus key={webhookHealthKey(health)} health={health} allowTest />}
       <SettingsForm
         areas={settings?.areas ?? [...DEFAULT_AREAS]}
         webhookUrl={settings?.webhookUrl ?? ""}

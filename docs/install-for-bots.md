@@ -98,6 +98,16 @@ If the CLI asks you to confirm tables, buckets, or sites, review the plan and ac
 - Tables `decisions`, `settings`, `allowed_emails` (indexes: `status` + `$createdAt` on `decisions`; unique `email` on `allowed_emails`)
 - Bucket `decision-images` (3 MiB, `jpg` / `jpeg` / `png` / `webp` / `gif`)
 
+`settings` also stores answer-notification status. On a project created before those columns existed, run `appwrite push` again so delivery results can be saved. Add them by hand if the CLI will not:
+
+- `webhook_last_outcome` (string, 16, default empty) — `succeeded`, `failed`, or empty
+- `webhook_last_at` (datetime, optional)
+- `webhook_last_error` (string, 240, default empty) — safe text only, never the secret or the URL
+- `webhook_last_kind` (string, 16, default empty) — `delivery` or `test`
+- `webhook_last_url_hash` (string, 64, default empty) — SHA-256 of the URL that was checked
+
+Until those columns exist, answering still works. The indicator stays “Not verified” because the result cannot be stored. Do not log or display `webhook_secret`.
+
 If `appwrite push table` fails while creating columns, add `collections.write` to the key and retry, or create the columns with TablesDB to match `appwrite.config.json`.
 
 ## 6. Deploy the Site
@@ -179,7 +189,27 @@ Point the assistant at the new HTTPS origin only. Paths and payloads stay the sa
 - Mark an answered card as picked up: `POST /api/agent/decisions/:id/route` with `{ "expectedRevision": "<revision>" }`. **`expectedRevision` must be a string** (for example `"2"`), not a JSON number. A number returns an error such as “Decision version must be text.”
 - Optional webhook: event name `decision.answered`. Headers: `X-Decisions-Event`, `X-Decisions-Signature: sha256=<hex>` of the raw body, `Authorization: Bearer <webhook secret>`. Delivery is attempted twice, with a 3 second timeout, and never follows redirects. JSON fields include `id`, `question`, `area`, `waiting_on`, `answer`, `custom_answer`, `answered_at`.
 
-Run a side-by-side test before moving any production cards: create a test card, answer it in the UI, confirm a webhook if one is configured, call `/route` with the revision as text, then delete the test card. Do not change a previous live deployment (for example a Vercel + Supabase site) until the user agrees to cut over.
+### Answer notification status
+
+The inbox and `/settings` show whether notifications are working. Do not tell the user they work just because a URL is saved.
+
+| State                | Meaning                                                                                                                      |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Not configured       | No webhook URL in settings and no `DECISION_WEBHOOK_URL`                                                                     |
+| Not verified         | A URL is saved, but this URL has not had a successful test or delivery                                                       |
+| Working              | The last test or the last real delivery returned HTTP 2xx                                                                    |
+| Last delivery failed | The last attempt failed. The message is a short safe sentence and does not include the secret, the URL, or the response body |
+
+To configure it:
+
+1. Obtain or create an HTTPS receiver for the user’s decision-answered automation, plus a shared secret. Do not hardcode a product routine ID, a personal email, or a live hostname.
+2. Sign in as the owner and open `/settings`. Set **Answer webhook URL** (`webhookUrl`) and, when you have the shared secret, **Webhook secret** (`webhookSecret`, write-only, 16–256 characters). Leave the secret blank to keep the one `/setup` generated. Saving a new URL or secret marks the indicator “Not verified”.
+3. Press **Send test notification**. That POSTs event `webhook.test` with `"test": true` and does not create a card. Ignore that event except as a connectivity check.
+4. Success is: the receiver returns HTTP 2xx within 3 seconds without a redirect, the HMAC over the raw body matches `X-Decisions-Signature`, and the indicator says **Working**. Then answer one test card and confirm event `decision.answered`.
+
+If the indicator is not Working, use **How a bot can set this up**. It copies the same steps. Settings values override `DECISION_WEBHOOK_URL` and `DECISION_WEBHOOK_SECRET` when set. Do not put the secret in git or in Site variables.
+
+Run a side-by-side test before moving any production cards: create a test card, answer it in the UI, confirm the indicator says Working if a webhook is configured, call `/route` with the revision as text, then delete the test card. Do not change a previous live deployment (for example a Vercel + Supabase site) until the user agrees to cut over.
 
 ## 10. Automated checks
 
@@ -194,16 +224,16 @@ To try the UI without Appwrite, leave the Appwrite variables unset and run `npm 
 
 ## Troubleshooting
 
-| Symptom | What to do |
-| --- | --- |
-| `appwrite push table` fails on columns | Add `collections.write` to the server key and retry, or create columns with TablesDB. |
-| `appwrite push site` fails on permission | Add `sites.read`, `sites.write`, and `log.read` (`log.read`, not `logs.read`). |
+| Symptom                                  | What to do                                                                                                                           |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `appwrite push table` fails on columns   | Add `collections.write` to the server key and retry, or create columns with TablesDB.                                                |
+| `appwrite push site` fails on permission | Add `sites.read`, `sites.write`, and `log.read` (`log.read`, not `logs.read`).                                                       |
 | Site is built but there is no public URL | Add `rules.read` and `rules.write`, then run `appwrite push site --force --site-id decisions-app --no-code`. Do not invent a domain. |
-| `create-site-rule` asks for `domain` | That API is custom-domain only. Stop unless the user gave a domain they own. |
-| Preview hostname asks for org sign-in | That is not the public URL. Use the generated `https://<hex>.appwrite.network` rule instead. |
-| `http://` returns 500 | Use `https://`. |
-| `/setup` is not a form | Confirm the deployment is active, public env vars are set, and you are on the generated HTTPS domain. |
-| Agent `/route` rejects the body | Send `expectedRevision` as a string. |
+| `create-site-rule` asks for `domain`     | That API is custom-domain only. Stop unless the user gave a domain they own.                                                         |
+| Preview hostname asks for org sign-in    | That is not the public URL. Use the generated `https://<hex>.appwrite.network` rule instead.                                         |
+| `http://` returns 500                    | Use `https://`.                                                                                                                      |
+| `/setup` is not a form                   | Confirm the deployment is active, public env vars are set, and you are on the generated HTTPS domain.                                |
+| Agent `/route` rejects the body          | Send `expectedRevision` as a string.                                                                                                 |
 
 ## What not to do
 

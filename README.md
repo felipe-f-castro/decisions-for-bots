@@ -14,6 +14,7 @@ This tree is the **Appwrite** edition. The existing Vercel + Supabase deployment
   - `POST` `/api/agent/decisions/:id/route` with `{ expectedRevision }`
   - `Authorization: Bearer <AGENT_API_KEY>`
 - Outbound `decision.answered` webhook (HMAC-SHA256 `X-Decisions-Signature` plus `Authorization: Bearer`) delivered by the app itself
+- A status indicator on the inbox and in Settings that says whether those notifications are actually working (not merely whether a URL is saved), plus a test send and copy-paste setup instructions for an assistant
 - Demo mode when Appwrite environment variables are left blank
 
 There is **no** one-click “Deploy to Appwrite” button. The shortest path is: one Appwrite account, `appwrite push`, deploy the site, then open `/setup`.
@@ -43,7 +44,7 @@ Appwrite Cloud **Free** projects pause after 7 days with no Console development 
    - `project.write`, `project.policies.write` (so setup can set a user-limit policy and turn off public sign-up)
    - `sites.read`, `sites.write`, `log.read` (Sites group; the name `logs.read` does not exist)
    - `rules.read`, `rules.write` (needed to create the platform-generated public domain)
-   Copy the key once. It never belongs in git. Adding scopes later does not rotate the secret.
+     Copy the key once. It never belongs in git. Adding scopes later does not rotate the secret.
 3. Copy `.env.example` to `.env.local` and fill in the endpoint, project ID, and server key. Leave `AGENT_API_KEY` and webhook values blank; `/setup` will create them.
 4. Log in to the CLI and link this folder to the project:
 
@@ -54,6 +55,7 @@ Appwrite Cloud **Free** projects pause after 7 days with no Console development 
    ```
 
    When prompted, choose the existing project. Do not commit the `.appwrite` session folder.
+
 5. Push the database, tables, and bucket (and optionally the site definition) from `appwrite.config.json`:
 
    ```bash
@@ -61,6 +63,17 @@ Appwrite Cloud **Free** projects pause after 7 days with no Console development 
    ```
 
    If the CLI asks you to confirm tables, buckets, or sites, review the plan and accept only this project's resources (`inbox`, `decisions`, `settings`, `allowed_emails`, `decision-images`).
+
+   **Existing projects** also need the answer-notification columns on `settings`. Run `appwrite push` again (or add the columns below, then push). Until they exist, answers still save, but the indicator stays “Not verified” because the result cannot be stored.
+
+   - `webhook_last_outcome` (string, 16, default empty) — `succeeded`, `failed`, or empty
+   - `webhook_last_at` (datetime, optional)
+   - `webhook_last_error` (string, 240, default empty) — a short safe sentence, never the secret or the URL
+   - `webhook_last_kind` (string, 16, default empty) — `delivery` or `test`
+   - `webhook_last_url_hash` (string, 64, default empty) — SHA-256 of the URL that was checked, so a changed URL is not shown as working
+
+   Do not add a column for the webhook secret beyond the existing `webhook_secret`, and do not log or display that secret.
+
 6. Run the app locally:
 
    ```bash
@@ -69,6 +82,7 @@ Appwrite Cloud **Free** projects pause after 7 days with no Console development 
    ```
 
    Open http://localhost:3000/setup. Enter **your** email and a password (at least 10 characters), the decision areas, and an optional webhook URL. Copy the agent API key and webhook secret that appear **once**, then sign in at `/login`.
+
 7. To host the Next.js app on [Appwrite Sites](https://appwrite.io/docs/products/sites), push or create a Site in this project (framework `nextjs`, `npm ci`, `npm run build`, output `./.next`, Node 22). Set only `NEXT_PUBLIC_APPWRITE_ENDPOINT` and `NEXT_PUBLIC_APPWRITE_PROJECT_ID` as Site environment variables, and grant the Site the scopes listed in `appwrite.config.json`. On Sites, an ephemeral `x-appwrite-key` is injected at request time, so you should not put `APPWRITE_API_KEY` in the repo, in Site variables, or in a public build log.
 8. Give the site a public URL. Do **not** invent a hostname the user does not own, and do not guess `https://<site-id>.appwrite.network` (that typically 404s). The Console “add domain” flow and `POST /proxy/rules/site` are for a **custom domain you already own**. Preview hosts can be org-gated and are not the public Visit URL. After the API key has `rules.write`, create a [platform-generated domain](https://appwrite.io/docs/products/sites/domains) with:
 
@@ -96,6 +110,7 @@ Bots should only need a new base URL after you cut over. The paths, JSON bodies,
 - List or read: `GET /api/agent/decisions`, `GET /api/agent/decisions/:id`.
 - Mark an answered card as picked up: `POST /api/agent/decisions/:id/route` with `{ "expectedRevision": "<revision>" }`.
 - Webhook event: `decision.answered`. Headers: `X-Decisions-Event`, `X-Decisions-Signature: sha256=<hex>`, `Authorization: Bearer <webhook secret>`. Delivery is attempted twice, with a 3 second timeout, and never follows redirects.
+- The signed-in owner sees whether that delivery is working on the inbox and at `/settings`. States are **Not configured** (no URL), **Not verified** (a URL is saved but this URL has not had a successful test or delivery), **Working** (last test or delivery succeeded), and **Last delivery failed** (safe error, no secret). Use **Send test notification** to POST `webhook.test` without creating a card. **How a bot can set this up** copies instructions for saving `DECISION_WEBHOOK_URL` and the matching secret. A saved URL alone is not success.
 
 See [docs/install-for-bots.md](docs/install-for-bots.md) for step-by-step install instructions written for an AI assistant (create the project, set the API key and env, push schema, deploy the Site, create the generated domain, run `/setup`, connect the agent API and webhook, and run the test).
 

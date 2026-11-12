@@ -3,6 +3,7 @@ import { sortOpen } from "@/lib/domain";
 import { getConfig } from "@/lib/config";
 import { apiError, authorize, json, readCreation } from "@/lib/http";
 import { getStore } from "@/lib/store";
+import { readPublicWebhookHealth } from "@/lib/webhook-health";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +15,7 @@ export async function GET(request: NextRequest) {
     return json({
       decisions: sortOpen(await getStore().list()),
       mode: getConfig().mock ? "demo" : "appwrite",
+      webhookHealth: await readPublicWebhookHealth(),
     });
   } catch (error) {
     return apiError(error);
