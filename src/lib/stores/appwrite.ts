@@ -19,6 +19,12 @@ import {
   SIGNED_URL_SECONDS,
   type ImageUpload,
 } from "../images";
+import {
+  attachmentFromUpload,
+  validateAnswerUploads,
+  AUDIO_BUCKET,
+  type AnswerUpload,
+} from "../media";
 import { createAdminClient } from "../appwrite/admin";
 import { DATABASE_ID, DECISIONS_TABLE } from "../appwrite/ids";
 import type { DecisionStore } from "./types";
@@ -42,7 +48,63 @@ export type DecisionRow = Models.Row & {
   answered_at?: string | null;
   version: number;
   image_paths?: string[];
+  answer_image_id?: string;
+  answer_image_name?: string;
+  answer_image_type?: string;
+  answer_image_alt?: string;
+  answer_audio_id?: string;
+  answer_audio_name?: string;
+  answer_audio_type?: string;
+  answer_audio_ms?: string;
 };
+
+function answerMediaFromRow(row: DecisionRow): Decision["answerMedia"] {
+  const items: Decision["answerMedia"] = [];
+  if (row.answer_image_id) {
+    const url = `/api/decisions/${row.$id}/media/${row.answer_image_id}`;
+    items.push({
+      id: row.answer_image_id,
+      kind: "image",
+      url,
+      thumbnailUrl: url,
+      filename: row.answer_image_name || "image",
+      contentType: row.answer_image_type || "image/png",
+      alt: row.answer_image_alt || row.answer_image_name || "Answer image",
+      durationSeconds: null,
+    });
+  }
+  if (row.answer_audio_id) {
+    const url = `/api/decisions/${row.$id}/media/${row.answer_audio_id}`;
+    const ms = Number(row.answer_audio_ms);
+    items.push({
+      id: row.answer_audio_id,
+      kind: "audio",
+      url,
+      thumbnailUrl: "",
+      filename: row.answer_audio_name || "audio",
+      contentType: row.answer_audio_type || "audio/webm",
+      alt: "",
+      durationSeconds: row.answer_audio_ms && Number.isFinite(ms) ? ms / 1000 : null,
+    });
+  }
+  return items;
+}
+
+function mediaColumns(media: Decision["answerMedia"]) {
+  const image = media.find((item) => item.kind === "image");
+  const audio = media.find((item) => item.kind === "audio");
+  return {
+    answer_image_id: image?.id || "",
+    answer_image_name: image?.filename || "",
+    answer_image_type: image?.contentType || "",
+    answer_image_alt: image?.alt || "",
+    answer_audio_id: audio?.id || "",
+    answer_audio_name: audio?.filename || "",
+    answer_audio_type: audio?.contentType || "",
+    answer_audio_ms:
+      audio?.durationSeconds == null ? "" : String(Math.round(audio.durationSeconds * 1000)),
+  };
+}
 
 function fromRow(row: DecisionRow): Decision {
   return {
@@ -56,6 +118,7 @@ function fromRow(row: DecisionRow): Decision {
     status: statuses[row.status],
     answer: row.answer || "",
     customAnswer: row.custom_answer || "",
+    answerMedia: answerMediaFromRow(row),
     answeredAt: row.answered_at ?? null,
     createdAt: row.$createdAt,
     updatedAt: row.$updatedAt,
@@ -126,7 +189,9 @@ export class AppwriteStore implements DecisionStore {
   private async row(id: string) {
     validateDecisionId(id);
     try {
-      return await (await this.db()).getRow<DecisionRow>({
+      return await (
+        await this.db()
+      ).getRow<DecisionRow>({
         databaseId: DATABASE_ID,
         tableId: DECISIONS_TABLE,
         rowId: id,
@@ -143,7 +208,12 @@ export class AppwriteStore implements DecisionStore {
     const decisions: Decision[] = [];
     const pageSize = 100;
     for (let offset = 0; ; offset += pageSize) {
-      const queries = [Query.orderAsc("$createdAt"), Query.orderAsc("$id"), Query.limit(pageSize), Query.offset(offset)];
+      const queries = [
+        Query.orderAsc("$createdAt"),
+        Query.orderAsc("$id"),
+        Query.limit(pageSize),
+        Query.offset(offset),
+      ];
       if (status) queries.unshift(Query.equal("status", status.toLowerCase()));
       let page;
       try {
@@ -199,7 +269,9 @@ export class AppwriteStore implements DecisionStore {
     }
     const imagePaths = results.map((result) => (result as PromiseFulfilledResult<string>).value);
     try {
-      const row = await (await this.db()).createRow<DecisionRow>({
+      const row = await (
+        await this.db()
+      ).createRow<DecisionRow>({
         databaseId: DATABASE_ID,
         tableId: DECISIONS_TABLE,
         rowId: id,
@@ -230,29 +302,103 @@ export class AppwriteStore implements DecisionStore {
     }
   }
 
-  async mutate(id: string, mutation: Mutation) {
+  private async deleteStored(files: { bucket: string; fileId: string }[]) {
+    if (!files.length) return;
+    const storage = await this.storage();
+    await Promise.all(
+      files.map((file) =>
+        storage.deleteFile({ bucketId: file.bucket, fileId: file.fileId }).catch(() => undefined),
+      ),
+    );
+  }
+
+  async mutate(id: string, mutation: Mutation, uploads: AnswerUpload[] = []) {
+    if (mutation.action !== "answer" && uploads.length)
+      throw new AppError("Only an answer can include an image or audio file.");
+    const validated = mutation.action === "answer" ? validateAnswerUploads(uploads) : [];
     const current = await this.row(id);
-    const updated = applyMutation(fromRow(current), mutation);
-    const result = await (await this.db()).updateRows<DecisionRow>({
-      databaseId: DATABASE_ID,
-      tableId: DECISIONS_TABLE,
-      data: {
+    const stored: { bucket: string; fileId: string }[] = [];
+    const storage = await this.storage();
+    let committed = false;
+    try {
+      const attachments = [];
+      for (const upload of validated) {
+        const bucket = upload.kind === "image" ? IMAGE_BUCKET : AUDIO_BUCKET;
+        const fileId = randomUUID();
+        await storage.createFile({
+          bucketId: bucket,
+          fileId,
+          file: InputFile.fromBuffer(Buffer.from(upload.bytes), upload.filename),
+        });
+        stored.push({ bucket, fileId });
+        attachments.push(attachmentFromUpload(fileId, upload));
+      }
+      const updated = applyMutation(
+        fromRow(current),
+        mutation.action === "answer" ? { ...mutation, attachments } : mutation,
+      );
+      const data = {
         status: updated.status.toLowerCase() as RowStatus,
         answer: updated.answer,
         custom_answer: updated.customAnswer,
         answered_at: updated.answeredAt,
         version: current.version + 1,
-      },
-      queries: [Query.equal("$id", id), Query.equal("version", current.version)],
+        ...mediaColumns(updated.answerMedia),
+      };
+      const result = await (
+        await this.db()
+      ).updateRows<DecisionRow>({
+        databaseId: DATABASE_ID,
+        tableId: DECISIONS_TABLE,
+        data,
+        queries: [Query.equal("$id", id), Query.equal("version", current.version)],
+      });
+      if (!result.total)
+        throw new AppError("This decision changed or is locked. Refresh before trying again.", 409);
+      committed = true;
+      const kept = new Set(updated.answerMedia.map((item) => item.id));
+      const previous = [
+        current.answer_image_id ? { bucket: IMAGE_BUCKET, fileId: current.answer_image_id } : null,
+        current.answer_audio_id ? { bucket: AUDIO_BUCKET, fileId: current.answer_audio_id } : null,
+      ].filter((file): file is { bucket: string; fileId: string } =>
+        Boolean(file && !kept.has(file.fileId)),
+      );
+      await this.deleteStored(previous);
+      const row = result.rows?.[0] ?? { ...current, ...data };
+      return (await this.signed([row]))[0];
+    } catch (error) {
+      if (!committed) await this.deleteStored(stored);
+      throw error;
+    }
+  }
+
+  async readAnswerMedia(id: string, fileId: string) {
+    const row = await this.row(id);
+    const media = answerMediaFromRow(row).find((item) => item.id === fileId);
+    if (!media) return null;
+    const bucket = media.kind === "image" ? IMAGE_BUCKET : AUDIO_BUCKET;
+    const bytes = await (await this.storage()).getFileDownload({ bucketId: bucket, fileId });
+    return {
+      bytes: new Uint8Array(bytes),
+      contentType: media.contentType,
+      filename: media.filename,
+    };
+  }
+
+  async remove(id: string) {
+    const row = await this.row(id);
+    await (
+      await this.db()
+    ).deleteRow({
+      databaseId: DATABASE_ID,
+      tableId: DECISIONS_TABLE,
+      rowId: id,
     });
-    if (!result.total) throw new AppError("This decision changed or is locked. Refresh before trying again.", 409);
-    const row = result.rows?.[0] ?? { ...current, ...{
-      status: updated.status.toLowerCase() as RowStatus,
-      answer: updated.answer,
-      custom_answer: updated.customAnswer,
-      answered_at: updated.answeredAt,
-      version: current.version + 1,
-    } };
-    return (await this.signed([row]))[0];
+    const files = [
+      ...(row.image_paths ?? []).map((fileId) => ({ bucket: IMAGE_BUCKET, fileId })),
+      row.answer_image_id ? { bucket: IMAGE_BUCKET, fileId: row.answer_image_id } : null,
+      row.answer_audio_id ? { bucket: AUDIO_BUCKET, fileId: row.answer_audio_id } : null,
+    ].filter((file): file is { bucket: string; fileId: string } => Boolean(file?.fileId));
+    await this.deleteStored(files);
   }
 }

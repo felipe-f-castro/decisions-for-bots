@@ -62,7 +62,7 @@ Appwrite Cloud **Free** projects pause after 7 days with no Console development 
    appwrite push
    ```
 
-   If the CLI asks you to confirm tables, buckets, or sites, review the plan and accept only this project's resources (`inbox`, `decisions`, `settings`, `allowed_emails`, `decision-images`).
+   If the CLI asks you to confirm tables, buckets, or sites, review the plan and accept only this project's resources (`inbox`, `decisions`, `settings`, `allowed_emails`, `decision-images`, `decision-audio`).
 
    **Existing projects** also need the answer-notification columns on `settings`. Run `appwrite push` again (or add the columns below, then push). Until they exist, answers still save, but the indicator stays “Not verified” because the result cannot be stored.
 
@@ -73,6 +73,13 @@ Appwrite Cloud **Free** projects pause after 7 days with no Console development 
    - `webhook_last_url_hash` (string, 64, default empty) — SHA-256 of the URL that was checked, so a changed URL is not shown as working
 
    Do not add a column for the webhook secret beyond the existing `webhook_secret`, and do not log or display that secret.
+
+   **Existing projects** also need answer-media columns on `decisions` and the `decision-audio` bucket (8 MiB; `webm`, `mp3`, `m4a`, `wav`, `ogg`). Run `appwrite push` again. Until the columns exist, saving an answer fails, because every answer update writes them. Optional strings, default empty:
+
+   - `answer_image_id` (36), `answer_image_name` (120), `answer_image_type` (100), `answer_image_alt` (200)
+   - `answer_audio_id` (36), `answer_audio_name` (120), `answer_audio_type` (100), `answer_audio_ms` (8, milliseconds as text)
+
+   Answer images use the existing `decision-images` bucket (3 MiB). Do not deploy this version before the push.
 
 6. Run the app locally:
 
@@ -111,6 +118,7 @@ Bots should only need a new base URL after you cut over. The paths, JSON bodies,
 - Mark an answered card as picked up: `POST /api/agent/decisions/:id/route` with `{ "expectedRevision": "<revision>" }`.
 - Webhook event: `decision.answered`. Headers: `X-Decisions-Event`, `X-Decisions-Signature: sha256=<hex>`, `Authorization: Bearer <webhook secret>`. Delivery is attempted twice, with a 3 second timeout, and never follows redirects.
 - The signed-in owner sees whether that delivery is working on the inbox and at `/settings`. States are **Not configured** (no URL), **Not verified** (a URL is saved but this URL has not had a successful test or delivery), **Working** (last test or delivery succeeded), and **Last delivery failed** (safe error, no secret). Use **Send test notification** to POST `webhook.test` without creating a card. **How a bot can set this up** copies instructions for saving `DECISION_WEBHOOK_URL` and the matching secret. A saved URL alone is not success.
+- An answer may include one image and one audio file as well as text. A media-only reply uses `custom: true` and an empty `answer` (stored `answer` and `customAnswer` are both empty). REST field `answerMedia` uses camelCase. The webhook field `answer_media` uses snake_case (`content_type`, `duration_seconds`). Fetch those URLs with the agent bearer token: `GET /api/agent/decisions/:id/media/:fileId`. Delete a card with `DELETE /api/agent/decisions/:id` (also deletes its files). Limits: PNG/JPEG/WebP/GIF up to 3 MiB; WebM/MP3/M4A/WAV/Ogg up to 8 MiB and 5 minutes.
 
 See [docs/install-for-bots.md](docs/install-for-bots.md) for step-by-step install instructions written for an AI assistant (create the project, set the API key and env, push schema, deploy the Site, create the generated domain, run `/setup`, connect the agent API and webhook, and run the test).
 

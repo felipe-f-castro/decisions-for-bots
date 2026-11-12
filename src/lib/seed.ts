@@ -5,6 +5,7 @@ export function seedDecisions(): Decision[] {
     status: "Open" as const,
     answer: "",
     customAnswer: "",
+    answerMedia: [],
     answeredAt: null,
     deadline: null,
     images: [],

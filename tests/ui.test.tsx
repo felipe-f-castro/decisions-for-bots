@@ -65,7 +65,8 @@ describe("complete local inbox journeys using the real API handlers", () => {
     const { user, main, open } = setup();
     let group = open().getByRole("article", { name: "Which logo should we use?" });
     expect(within(group).queryByRole("button", { name: "Approve it" })).toBeNull();
-    expect(within(group).getAllByRole("button")).toHaveLength(3);
+    expect(within(group).getByRole("button", { name: "Record audio" })).toBeTruthy();
+    expect(within(group).getByLabelText("Add image")).toBeTruthy();
     const fullImage = within(group).getByRole("link", { name: "View Rounded mark full size" });
     expect(fullImage.getAttribute("href")).toBe("/demo/rounded.svg");
     expect(fullImage.getAttribute("target")).toBe("_blank");

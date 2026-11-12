@@ -97,11 +97,7 @@
           "key": "status",
           "type": "string",
           "format": "enum",
-          "elements": [
-            "open",
-            "answered",
-            "routed"
-          ],
+          "elements": ["open", "answered", "routed"],
           "required": true,
           "array": false
         },
@@ -141,16 +137,77 @@
           "size": 220,
           "required": false,
           "array": true
+        },
+        {
+          "key": "answer_image_id",
+          "type": "string",
+          "size": 36,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "answer_image_name",
+          "type": "string",
+          "size": 120,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "answer_image_type",
+          "type": "string",
+          "size": 100,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "answer_image_alt",
+          "type": "string",
+          "size": 200,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "answer_audio_id",
+          "type": "string",
+          "size": 36,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "answer_audio_name",
+          "type": "string",
+          "size": 120,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "answer_audio_type",
+          "type": "string",
+          "size": 100,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "answer_audio_ms",
+          "type": "string",
+          "size": 8,
+          "required": false,
+          "array": false,
+          "default": ""
         }
       ],
       "indexes": [
         {
           "$id": "status_created",
           "type": "key",
-          "attributes": [
-            "status",
-            "$createdAt"
-          ]
+          "attributes": ["status", "$createdAt"]
         }
       ]
     },
@@ -275,9 +332,7 @@
         {
           "$id": "email_unique",
           "type": "unique",
-          "attributes": [
-            "email"
-          ]
+          "attributes": ["email"]
         }
       ]
     }
@@ -288,13 +343,18 @@
       "name": "decision-images",
       "enabled": true,
       "maximumFileSize": 3145728,
-      "allowedFileExtensions": [
-        "jpg",
-        "jpeg",
-        "png",
-        "webp",
-        "gif"
-      ],
+      "allowedFileExtensions": ["jpg", "jpeg", "png", "webp", "gif"],
+      "encryption": false,
+      "antivirus": false,
+      "fileSecurity": false,
+      "permissions": []
+    },
+    {
+      "$id": "decision-audio",
+      "name": "decision-audio",
+      "enabled": true,
+      "maximumFileSize": 8388608,
+      "allowedFileExtensions": ["webm", "mp3", "m4a", "wav", "ogg"],
       "encryption": false,
       "antivirus": false,
       "fileSecurity": false,

@@ -45,7 +45,7 @@ Decisions sends these headers:
 
 Delivery is attempted twice. Each attempt times out after 3 seconds.
 
-A real answer body looks like this (no media fields in this version):
+A real answer body looks like this. answer_media is empty when the reply is text only:
 
     {
       "event": "decision.answered",
@@ -54,11 +54,24 @@ A real answer body looks like this (no media fields in this version):
         "question": "<question>",
         "area": "<area>",
         "waiting_on": "<who is waiting>",
-        "answer": "<saved answer>",
+        "answer": "<saved answer, or empty when the reply is media only>",
         "custom_answer": "<same as answer when custom, otherwise empty>",
-        "answered_at": "<ISO-8601 timestamp>"
+        "answered_at": "<ISO-8601 timestamp>",
+        "answer_media": [
+          {
+            "id": "<file uuid>",
+            "kind": "image or audio",
+            "url": "<origin>/api/agent/decisions/<id>/media/<file uuid>",
+            "content_type": "image/png or audio/webm",
+            "filename": "<name>",
+            "alt": "<image description, empty for audio>",
+            "duration_seconds": null
+          }
+        ]
       }
     }
+
+Fetch each answer_media url with Authorization: Bearer <agent API key>. The same bearer is required. A browser session cookie cannot fetch the agent URL. At most one image and one audio item. duration_seconds is a number of seconds for audio when known, otherwise null.
 
 A test body uses "event": "webhook.test", "test": true, and a decision id of 00000000-0000-4000-8000-000000000000. Ignore it except as proof the receiver is reachable.
 
