@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import { getConfig } from "./config";
 import { isWebUrl, type Decision } from "./domain";
 import { getSettings, recordWebhookAttempt } from "./appwrite/settings";
+import { webhookMedia } from "./media";
 import { effectiveWebhookTarget, safeWebhookError, type WebhookKind } from "./webhook-status";
 
 const EVENT = "decision.answered";
@@ -14,7 +15,7 @@ export function signAnswerWebhook(body: string, secret: string) {
   return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
 }
 
-export function answerWebhookPayload(decision: Decision) {
+export function answerWebhookPayload(decision: Decision, origin = "") {
   return JSON.stringify({
     event: EVENT,
     decision: {
@@ -25,6 +26,7 @@ export function answerWebhookPayload(decision: Decision) {
       answer: decision.answer,
       custom_answer: decision.customAnswer,
       answered_at: decision.answeredAt,
+      answer_media: webhookMedia(decision, origin),
     },
   });
 }
@@ -85,7 +87,7 @@ async function remember(
   }
 }
 
-export async function notifyDecisionAnswered(decision: Decision): Promise<void> {
+export async function notifyDecisionAnswered(decision: Decision, origin = ""): Promise<void> {
   const report: DeliveryReport = { outcome: "skipped", error: "", url: "" };
   try {
     const { url, secret } = await webhookConfig();
@@ -99,7 +101,7 @@ export async function notifyDecisionAnswered(decision: Decision): Promise<void> 
       );
       return;
     }
-    const body = answerWebhookPayload(decision);
+    const body = answerWebhookPayload(decision, origin);
     const headers = {
       "Content-Type": "application/json",
       "X-Decisions-Event": EVENT,

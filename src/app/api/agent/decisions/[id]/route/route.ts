@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { AppError, parseMutation, validateDecisionId } from "@/lib/domain";
 import { apiError, authorizeAgent, json, readJson } from "@/lib/http";
+import { withAgentMediaUrls } from "@/lib/media";
+import { requestOrigin } from "@/lib/origin";
 import { getAgentStore } from "@/lib/store";
 
 export const runtime = "nodejs";
@@ -14,7 +16,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     if (!input || typeof input !== "object" || Array.isArray(input))
       throw new AppError("Send a JSON object with expectedRevision.");
     const mutation = parseMutation({ ...input, action: "route" });
-    return json({ decision: await getAgentStore().mutate(id, mutation) });
+    const decision = withAgentMediaUrls(
+      await getAgentStore().mutate(id, mutation),
+      requestOrigin(request.headers, request.url),
+    );
+    return json({ decision });
   } catch (error) {
     return apiError(error);
   }

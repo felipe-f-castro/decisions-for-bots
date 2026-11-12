@@ -932,6 +932,71 @@ svg {
   display: block;
   margin-top: 7px;
 }
+.media-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.media-actions .button {
+  min-height: 36px;
+  font-size: 11px;
+}
+.media-file {
+  position: relative;
+  cursor: pointer;
+}
+.media-file input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.media-preview,
+.answer-audio,
+.answer-media-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.media-preview img,
+.answer-image img {
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #f4f6f2;
+}
+.media-preview label,
+.audio-duration,
+.field-hint {
+  font-size: 11px;
+  color: #6d7f59;
+}
+.media-preview input,
+.answer-audio audio {
+  width: 100%;
+}
+.answer-audio audio {
+  min-height: 40px;
+}
+.answer-image {
+  display: block;
+}
+@media (max-width: 720px) {
+  .media-actions .button,
+  .media-actions .media-file {
+    flex: 1 1 100%;
+    min-height: 44px;
+    justify-content: center;
+  }
+}
 .card-footer {
   border-top: 1px solid #eff1ea;
   display: flex;

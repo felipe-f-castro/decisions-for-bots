@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   ArrowUpRight,
   Bot,
@@ -11,11 +11,14 @@ import {
   CornerDownLeft,
   Layers3,
   LockKeyhole,
+  ImagePlus,
+  Mic,
   Pencil,
   Send,
+  Square,
   Palette,
 } from "lucide-react";
-import { areaTone, type Area, type Decision } from "@/lib/domain";
+import { answerSummary, areaTone, formatDuration, type Area, type Decision } from "@/lib/domain";
 import { deadlineLabel, fullDate, isUrgent } from "@/lib/time";
 
 export function AreaBadge({ area }: { area: Area }) {
@@ -29,11 +32,47 @@ export function AreaBadge({ area }: { area: Area }) {
   );
 }
 
-export type AnswerHandler = (
-  decision: Decision,
-  answer: string,
-  custom: boolean,
-) => Promise<boolean>;
+export type AnswerDraft = {
+  text: string;
+  custom: boolean;
+  image?: File | null;
+  audio?: File | null;
+  alt?: string;
+  audioDuration?: number | null;
+};
+
+export type AnswerHandler = (decision: Decision, draft: AnswerDraft) => Promise<boolean>;
+
+function AnswerMediaView({ decision }: { decision: Decision }) {
+  if (!decision.answerMedia.length) return null;
+  return (
+    <div className="answer-media-list">
+      {decision.answerMedia.map((item) =>
+        item.kind === "image" ? (
+          <a
+            key={item.id}
+            href={item.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="answer-image"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={item.thumbnailUrl || item.url} alt={item.alt || item.filename} />
+          </a>
+        ) : (
+          <div key={item.id} className="answer-audio">
+            <audio controls preload="metadata" src={item.url}>
+              {item.filename}
+            </audio>
+            {item.durationSeconds != null && (
+              <span className="audio-duration">{formatDuration(item.durationSeconds)}</span>
+            )}
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
 
 function DecisionImages({ decision }: { decision: Decision }) {
   if (!decision.images.length) return null;
@@ -77,11 +116,136 @@ function AnswerControls({
   onAnswer: AnswerHandler;
 }) {
   const [custom, setCustom] = useState("");
+  const [image, setImage] = useState<File | null>(null);
+  const [audio, setAudio] = useState<File | null>(null);
+  const [alt, setAlt] = useState("");
+  const [audioDuration, setAudioDuration] = useState<number | null>(null);
+  const [imagePreview, setImagePreview] = useState("");
+  const [audioPreview, setAudioPreview] = useState("");
+  const [recording, setRecording] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [mediaError, setMediaError] = useState("");
   const id = useId();
+  const altId = useId();
+  const recorder = useRef<MediaRecorder | null>(null);
+  const stream = useRef<MediaStream | null>(null);
+  const alive = useRef(true);
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      if (recorder.current?.state === "recording") recorder.current.stop();
+      stream.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
+    };
+  }, [imagePreview]);
+  useEffect(() => {
+    return () => {
+      if (audioPreview) URL.revokeObjectURL(audioPreview);
+    };
+  }, [audioPreview]);
+
+  function takeImage(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] || null;
+    event.target.value = "";
+    if (!file) return;
+    if (file.size > 3 * 1024 * 1024) {
+      setMediaError("Each image must be 3 MiB or smaller.");
+      return;
+    }
+    setImage(file);
+    setImagePreview(URL.createObjectURL(file));
+    setAlt("");
+    setMediaError("");
+  }
+
+  function takeAudio(file: File, duration: number | null) {
+    if (file.size > 8 * 1024 * 1024) {
+      setMediaError("Audio must be 8 MiB or smaller.");
+      return;
+    }
+    setAudio(file);
+    setAudioPreview(URL.createObjectURL(file));
+    setAudioDuration(duration);
+    setMediaError("");
+  }
+
+  async function toggleRecording() {
+    if (recording) {
+      recorder.current?.stop();
+      return;
+    }
+    setMediaError("");
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setMediaError("Microphone isn’t available. Upload an audio file instead.");
+      return;
+    }
+    try {
+      const live = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.current = live;
+      const preferred = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find((type) =>
+        MediaRecorder.isTypeSupported(type),
+      );
+      const rec = new MediaRecorder(live, preferred ? { mimeType: preferred } : undefined);
+      const chunks: Blob[] = [];
+      const started = Date.now();
+      rec.ondataavailable = (event) => {
+        if (event.data.size) chunks.push(event.data);
+      };
+      rec.onstop = () => {
+        live.getTracks().forEach((track) => track.stop());
+        stream.current = null;
+        const type = (rec.mimeType || preferred || "audio/webm").split(";")[0];
+        const file = new File(
+          [new Blob(chunks, { type })],
+          type.includes("mp4") ? "reply.m4a" : "reply.webm",
+          {
+            type,
+          },
+        );
+        if (!alive.current) return;
+        takeAudio(file, (Date.now() - started) / 1000);
+        setRecording(false);
+      };
+      recorder.current = rec;
+      rec.start();
+      setRecording(true);
+      setElapsed(0);
+      const timer = window.setInterval(() => {
+        const seconds = (Date.now() - started) / 1000;
+        if (!alive.current || rec.state !== "recording") {
+          window.clearInterval(timer);
+          return;
+        }
+        setElapsed(seconds);
+        if (seconds >= 300) rec.stop();
+      }, 250);
+      rec.addEventListener("stop", () => window.clearInterval(timer), { once: true });
+    } catch {
+      setMediaError("Microphone isn’t available. Upload an audio file instead.");
+      setRecording(false);
+    }
+  }
+
+  const draft = { image, audio, alt, audioDuration };
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!custom.trim() || busy) return;
-    if (await onAnswer(decision, custom.trim(), true)) setCustom("");
+    const text = custom.trim();
+    if (busy || recording || (!text && !image && !audio)) return;
+    if (await onAnswer(decision, { text, custom: true, ...draft })) {
+      setCustom("");
+      setImage(null);
+      setImagePreview("");
+      setAlt("");
+      setAudio(null);
+      setAudioPreview("");
+      setAudioDuration(null);
+    }
   }
   return (
     <div className="answer-controls">
@@ -92,8 +256,8 @@ function AnswerControls({
               type="button"
               key={`${index}-${option}`}
               className={`option-button ${decision.answer === option && !decision.customAnswer ? "option-selected" : ""}`}
-              disabled={busy}
-              onClick={() => void onAnswer(decision, option, false)}
+              disabled={busy || recording}
+              onClick={() => void onAnswer(decision, { text: option, custom: false, ...draft })}
             >
               <span className="option-radio">
                 {decision.answer === option && !decision.customAnswer && <Check size={11} />}
@@ -117,20 +281,123 @@ function AnswerControls({
           id={id}
           value={custom}
           onChange={(event) => setCustom(event.target.value)}
-          placeholder={decision.options.length ? "Or, a different answer…" : "Type your answer…"}
+          placeholder={
+            decision.options.length
+              ? "Or, a different answer…"
+              : "Type your answer, or attach media…"
+          }
           maxLength={2000}
-          disabled={busy}
+          disabled={busy || recording}
           autoComplete="off"
         />
         <button
           type="submit"
-          disabled={busy || !custom.trim()}
+          disabled={busy || recording || (!custom.trim() && !image && !audio)}
           aria-label={`Send custom answer for ${decision.question}`}
         >
           <span>Send</span>
           <Send size={14} />
         </button>
       </form>
+      <div className="media-actions">
+        <label className="button button-secondary media-file">
+          <ImagePlus size={14} aria-hidden="true" />
+          Add image
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            onChange={takeImage}
+            disabled={busy || recording}
+          />
+        </label>
+        <label className="button button-secondary media-file">
+          <Mic size={14} aria-hidden="true" />
+          Upload audio
+          <input
+            type="file"
+            accept="audio/webm,audio/mpeg,audio/mp4,audio/wav,audio/ogg,.webm,.mp3,.m4a,.wav,.ogg"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) takeAudio(file, null);
+            }}
+            disabled={busy || recording}
+          />
+        </label>
+        <button
+          type="button"
+          className="button button-secondary"
+          onClick={() => void toggleRecording()}
+          disabled={busy}
+          aria-pressed={recording}
+        >
+          {recording ? (
+            <Square size={14} aria-hidden="true" />
+          ) : (
+            <Mic size={14} aria-hidden="true" />
+          )}
+          {recording ? `Stop ${formatDuration(elapsed)}` : "Record audio"}
+        </button>
+      </div>
+      <p className="field-hint">
+        One PNG, JPEG, WebP, or GIF up to 3 MiB, and one WebM, MP3, M4A, WAV, or Ogg recording up to
+        8 MiB and 5 minutes. A reply can be text, media, or both.
+      </p>
+      {imagePreview && (
+        <div className="media-preview">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={imagePreview} alt={alt || image?.name || "Selected answer image"} />
+          <label htmlFor={altId}>Image description</label>
+          <input
+            id={altId}
+            value={alt}
+            maxLength={200}
+            disabled={busy}
+            placeholder="What is in this image?"
+            onChange={(event) => setAlt(event.target.value)}
+          />
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => {
+              setImage(null);
+              setImagePreview("");
+              setAlt("");
+            }}
+          >
+            Remove image
+          </button>
+        </div>
+      )}
+      {audioPreview && (
+        <div className="answer-audio">
+          <audio controls preload="metadata" src={audioPreview} />
+          <span className="audio-duration">
+            {audioDuration != null ? formatDuration(audioDuration) : "Audio attached"}
+          </span>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => {
+              setAudio(null);
+              setAudioPreview("");
+              setAudioDuration(null);
+            }}
+          >
+            Remove audio
+          </button>
+        </div>
+      )}
+      {recording && (
+        <span className="saving-label" role="status">
+          Recording {formatDuration(elapsed)}. Press stop when you’re done.
+        </span>
+      )}
+      {mediaError && (
+        <p className="form-error" role="alert">
+          {mediaError}
+        </p>
+      )}
       {busy && (
         <span className="saving-label" role="status">
           Saving your answer…
@@ -228,8 +495,9 @@ export function AnsweredCard({
         <span className="chosen-icon">
           <Check size={15} />
         </span>
-        <p>{decision.answer}</p>
+        <p>{answerSummary(decision)}</p>
       </div>
+      <AnswerMediaView decision={decision} />
       <div className="answered-card-footer">
         <span>
           {decision.answeredAt ? fullDate(decision.answeredAt) : "Answer saved"}

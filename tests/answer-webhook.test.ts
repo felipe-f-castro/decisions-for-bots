@@ -74,6 +74,7 @@ describe("outbound answer webhook", () => {
           answer: decision.answer,
           custom_answer: decision.customAnswer,
           answered_at: decision.answeredAt,
+          answer_media: [],
         },
       });
       const headers = new Headers(init!.headers);

@@ -42,6 +42,28 @@ export interface DecisionImage {
   filename: string;
 }
 
+/** One image and/or one audio clip attached to an answer. */
+export interface AnswerMedia {
+  id: string;
+  kind: "image" | "audio";
+  url: string;
+  thumbnailUrl: string;
+  filename: string;
+  contentType: string;
+  alt: string;
+  durationSeconds: number | null;
+}
+
+/** File metadata after the bytes have been stored. URLs are added by the store. */
+export interface AnswerAttachment {
+  id: string;
+  kind: "image" | "audio";
+  filename: string;
+  contentType: string;
+  alt: string;
+  durationSeconds: number | null;
+}
+
 export interface Decision {
   id: string;
   question: string;
@@ -52,8 +74,10 @@ export interface Decision {
   waitingOn: string;
   deadline: string | null;
   status: Status;
+  /** Empty when the reply is media only. The display label is `answerSummary`. */
   answer: string;
   customAnswer: string;
+  answerMedia: AnswerMedia[];
   answeredAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -65,7 +89,17 @@ export type NewDecision = Pick<
   "question" | "context" | "options" | "area" | "waitingOn" | "deadline"
 > & { imageUrls: string[] };
 export type Mutation =
-  | { action: "answer"; answer: string; custom: boolean; expectedRevision: string }
+  | {
+      action: "answer";
+      answer: string;
+      custom: boolean;
+      expectedRevision: string;
+      /**
+       * Stored files for this answer. Omitted or empty means the saved answer
+       * has no media. Callers that accept HTTP input must not trust client-supplied ids.
+       */
+      attachments?: AnswerAttachment[];
+    }
   | { action: "reopen"; expectedRevision: string }
   | { action: "route"; expectedRevision: string };
 
@@ -169,7 +203,7 @@ export function parseNewDecision(input: unknown, areas: readonly string[] = AREA
   };
 }
 
-export function parseMutation(input: unknown): Mutation {
+export function parseMutation(input: unknown, options?: { allowEmptyAnswer?: boolean }): Mutation {
   const data = record(input);
   const expectedRevision = string(data.expectedRevision, "Decision version", 100, true);
   if (data.action === "reopen" || data.action === "route")
@@ -179,10 +213,49 @@ export function parseMutation(input: unknown): Mutation {
     throw new AppError("Specify whether this is a custom answer.");
   return {
     action: "answer",
-    answer: string(data.answer, "Answer", 2000, true),
+    answer: string(data.answer, "Answer", 2000, !options?.allowEmptyAnswer),
     custom: data.custom,
     expectedRevision,
   };
+}
+
+export function formatDuration(seconds: number) {
+  const total = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  return `${minutes}:${rest.toString().padStart(2, "0")}`;
+}
+
+export function answerSummary(decision: Pick<Decision, "answer" | "answerMedia">) {
+  if (decision.answer.trim()) return decision.answer;
+  const kinds = new Set(decision.answerMedia.map((item) => item.kind));
+  if (kinds.has("image") && kinds.has("audio")) return "Image and audio reply";
+  if (kinds.has("image")) return "Image reply";
+  if (kinds.has("audio")) return "Audio reply";
+  return "";
+}
+
+function asMedia(attachments: AnswerAttachment[] | undefined): AnswerMedia[] {
+  const items = attachments ?? [];
+  const images = items.filter((item) => item.kind === "image");
+  const audios = items.filter((item) => item.kind === "audio");
+  if (
+    items.length > 2 ||
+    images.length > 1 ||
+    audios.length > 1 ||
+    images.length + audios.length !== items.length
+  )
+    throw new AppError("Attach at most one image and one audio file.");
+  return items.map((item) => ({
+    id: item.id,
+    kind: item.kind,
+    url: "",
+    thumbnailUrl: "",
+    filename: item.filename,
+    contentType: item.contentType,
+    alt: item.alt,
+    durationSeconds: item.kind === "audio" ? item.durationSeconds : null,
+  }));
 }
 
 export function applyMutation(decision: Decision, mutation: Mutation, now = new Date()): Decision {
@@ -207,11 +280,17 @@ export function applyMutation(decision: Decision, mutation: Mutation, now = new 
       status: "Open",
       answer: "",
       customAnswer: "",
+      answerMedia: [],
       answeredAt: null,
       revision,
       updatedAt,
     };
   }
+  const answerMedia = asMedia(mutation.attachments);
+  if (!mutation.answer && answerMedia.length === 0)
+    throw new AppError(
+      mutation.custom ? "Enter an answer or attach an image or audio file." : "Choose an option.",
+    );
   if (!mutation.custom && !decision.options.includes(mutation.answer))
     throw new AppError("That option does not belong to this question.");
   return {
@@ -219,6 +298,7 @@ export function applyMutation(decision: Decision, mutation: Mutation, now = new 
     status: "Answered",
     answer: mutation.answer,
     customAnswer: mutation.custom ? mutation.answer : "",
+    answerMedia,
     answeredAt: new Date(
       Math.max(now.getTime(), decision.answeredAt ? Date.parse(decision.answeredAt) + 1 : 0),
     ).toISOString(),

@@ -38,7 +38,7 @@ import { webhookHealthKey } from "@/lib/webhook-instructions";
 import type { PublicWebhookHealth } from "@/lib/webhook-status";
 import { Brand } from "./brand";
 import { AddDecision } from "./add-decision";
-import { AnsweredCard, DecisionCard } from "./decision-card";
+import { AnsweredCard, DecisionCard, type AnswerDraft } from "./decision-card";
 import { WebhookStatus } from "./webhook-status";
 
 type Filter = "All" | Area;
@@ -132,7 +132,7 @@ export function Dashboard({
     return () => window.removeEventListener("keydown", onEscape);
   }, [mobileMenu]);
 
-  async function mutate(id: string, mutation: Mutation) {
+  async function mutate(id: string, mutation: Mutation, body?: FormData) {
     if (mutations.current.has(id)) throw new RequestError("This answer is still saving.", 409);
     mutations.current.add(id);
     revision.current += 1;
@@ -144,7 +144,7 @@ export function Dashboard({
         webhookHealth: PublicWebhookHealth | null;
       }>(`/api/decisions/${id}`, {
         method: "PATCH",
-        body: JSON.stringify(mutation),
+        body: body ?? JSON.stringify(mutation),
       });
       setDecisions((current) =>
         current.map((item) => (item.id === data.decision.id ? data.decision : item)),
@@ -158,14 +158,24 @@ export function Dashboard({
     }
   }
 
-  async function answer(decision: Decision, answer: string, custom: boolean) {
+  async function answer(decision: Decision, draft: AnswerDraft) {
     try {
-      const updated = await mutate(decision.id, {
-        action: "answer",
-        answer,
-        custom,
+      const mutation = {
+        action: "answer" as const,
+        answer: draft.text,
+        custom: draft.custom,
         expectedRevision: decision.revision,
-      });
+      };
+      const hasMedia = Boolean(draft.image || draft.audio);
+      const body = new FormData();
+      if (hasMedia) {
+        body.set("mutation", JSON.stringify(mutation));
+        if (draft.image) body.set("image", draft.image);
+        if (draft.audio) body.set("audio", draft.audio);
+        if (draft.alt) body.set("imageAlt", draft.alt);
+        if (draft.audioDuration != null) body.set("audioDuration", String(draft.audioDuration));
+      }
+      const updated = await mutate(decision.id, mutation, hasMedia ? body : undefined);
       const undo: Mutation =
         decision.status === "Answered"
           ? {

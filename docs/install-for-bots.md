@@ -97,6 +97,7 @@ If the CLI asks you to confirm tables, buckets, or sites, review the plan and ac
 - Database `inbox` (name Inbox)
 - Tables `decisions`, `settings`, `allowed_emails` (indexes: `status` + `$createdAt` on `decisions`; unique `email` on `allowed_emails`)
 - Bucket `decision-images` (3 MiB, `jpg` / `jpeg` / `png` / `webp` / `gif`)
+- Bucket `decision-audio` (8 MiB, `webm` / `mp3` / `m4a` / `wav` / `ogg`)
 
 `settings` also stores answer-notification status. On a project created before those columns existed, run `appwrite push` again so delivery results can be saved. Add them by hand if the CLI will not:
 
@@ -107,6 +108,13 @@ If the CLI asks you to confirm tables, buckets, or sites, review the plan and ac
 - `webhook_last_url_hash` (string, 64, default empty) — SHA-256 of the URL that was checked
 
 Until those columns exist, answering still works. The indicator stays “Not verified” because the result cannot be stored. Do not log or display `webhook_secret`.
+
+`decisions` also stores answer media. On a project created before those columns existed, run `appwrite push` again (tables and the `decision-audio` bucket). Add the columns by hand if the CLI will not. All are optional strings with a default of empty:
+
+- `answer_image_id` (36), `answer_image_name` (120), `answer_image_type` (100), `answer_image_alt` (200)
+- `answer_audio_id` (36), `answer_audio_name` (120), `answer_audio_type` (100), `answer_audio_ms` (8) — milliseconds as text, empty when unknown
+
+Until those columns exist, saving any answer fails, because the decision update always writes them. Push the schema before deploying this version. Question images stay in `decision-images`. Answer images use that same bucket. Answer audio uses `decision-audio`.
 
 If `appwrite push table` fails while creating columns, add `collections.write` to the key and retry, or create the columns with TablesDB to match `appwrite.config.json`.
 
@@ -187,7 +195,31 @@ Point the assistant at the new HTTPS origin only. Paths and payloads stay the sa
 - Create: `POST /api/agent/decisions` with JSON (`question`, `area`, optional `context`, `options`, `waitingOn`, `deadline`, `imageUrls`) or multipart (`decision` JSON plus `images` files)
 - List or read: `GET /api/agent/decisions`, `GET /api/agent/decisions/:id`
 - Mark an answered card as picked up: `POST /api/agent/decisions/:id/route` with `{ "expectedRevision": "<revision>" }`. **`expectedRevision` must be a string** (for example `"2"`), not a JSON number. A number returns an error such as “Decision version must be text.”
-- Optional webhook: event name `decision.answered`. Headers: `X-Decisions-Event`, `X-Decisions-Signature: sha256=<hex>` of the raw body, `Authorization: Bearer <webhook secret>`. Delivery is attempted twice, with a 3 second timeout, and never follows redirects. JSON fields include `id`, `question`, `area`, `waiting_on`, `answer`, `custom_answer`, `answered_at`.
+- Optional webhook: event name `decision.answered`. Headers: `X-Decisions-Event`, `X-Decisions-Signature: sha256=<hex>` of the raw body, `Authorization: Bearer <webhook secret>`. Delivery is attempted twice, with a 3 second timeout, and never follows redirects. JSON fields include `id`, `question`, `area`, `waiting_on`, `answer`, `custom_answer`, `answered_at`, and `answer_media`.
+- Delete a card (and its question images and answer media): `DELETE /api/agent/decisions/:id`.
+
+### Answers can include an image and audio
+
+The owner answers in the inbox with a listed option, custom text, an image, an audio file, or any mix. A media-only reply is allowed: the mutation sets `custom` to `true` and `answer` to `""`. The stored `answer` and `customAnswer` are then both empty. The card shows “Image reply”, “Audio reply”, or “Image and audio reply”. Those labels are not stored as the answer text. A listed option can include media too (`custom: false` and `answer` set to that option).
+
+`answerMedia` on the REST decision (and `answer_media` on the webhook) has at most one image and one audio item:
+
+```json
+{
+  "id": "<file uuid>",
+  "kind": "image",
+  "url": "https://<origin>/api/agent/decisions/<id>/media/<file uuid>",
+  "thumbnailUrl": "https://<origin>/api/agent/decisions/<id>/media/<file uuid>",
+  "filename": "reply.png",
+  "contentType": "image/png",
+  "alt": "the caption the owner typed",
+  "durationSeconds": null
+}
+```
+
+The webhook uses snake_case: `content_type`, `duration_seconds`, and no `thumbnailUrl`. Fetch the URL with the agent bearer token. A browser session uses `/api/decisions/:id/media/:fileId` instead and will not accept the bearer token. Question images stay on the existing short-lived view URLs and are not answer media.
+
+Limits: PNG, JPEG, WebP, or GIF up to 3 MiB; WebM, MP3, M4A, WAV, or Ogg up to 8 MiB and 5 minutes. Other file types are rejected. Replacing an answer or reopening the card deletes the previous answer files. Undo restores the previous text only; it cannot restore deleted media. `DELETE` removes the files.
 
 ### Answer notification status
 
