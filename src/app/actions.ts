@@ -1,10 +1,14 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getConfig } from "@/lib/config";
 import { getAccess } from "@/lib/auth";
 import { isEmailAllowed, updateWorkspaceSettings } from "@/lib/appwrite/settings";
+import { probeAnswerWebhook } from "@/lib/answer-webhook";
+import { readPublicWebhookHealth } from "@/lib/webhook-health";
 import { completeSetup, setupIsLocked } from "@/lib/setup";
+import type { PublicWebhookHealth } from "@/lib/webhook-status";
 import {
   clearSessionCookie,
   createProjectAccount,
@@ -17,9 +21,7 @@ import { PASSWORD_MAX_BYTES, PASSWORD_MIN_LENGTH, passwordBytes } from "@/lib/pa
 export type LoginState = { error?: string; sent?: boolean } | null;
 export type PasswordState = { error?: string; saved?: boolean } | null;
 export type SetupState =
-  | { error?: string }
-  | { complete: true; agentApiKey: string; webhookSecret: string }
-  | null;
+  { error?: string } | { complete: true; agentApiKey: string; webhookSecret: string } | null;
 
 const BAD_CREDENTIALS = "Email or password is incorrect.";
 
@@ -115,7 +117,8 @@ export async function signOut() {
 export async function runSetup(_previous: SetupState, formData: FormData): Promise<SetupState> {
   if (getConfig().mock) redirect("/");
   try {
-    if (await setupIsLocked()) return { error: "This workspace already has an owner. Sign in instead." };
+    if (await setupIsLocked())
+      return { error: "This workspace already has an owner. Sign in instead." };
     const password = String(formData.get("password") || "");
     const confirm = String(formData.get("confirm") || "");
     if (password !== confirm) return { error: "The two passwords don’t match." };
@@ -141,30 +144,73 @@ export async function signInWithGoogle() {
   redirect("/login");
 }
 
-
 export type SettingsState = { error?: string; saved?: boolean } | null;
+export type WebhookTestState = {
+  error?: string;
+  ok?: boolean;
+  health?: PublicWebhookHealth;
+} | null;
+
+async function requireOwner() {
+  if (getConfig().mock) return { error: "Settings are not used in demo mode." } as const;
+  let access;
+  try {
+    access = await getAccess();
+  } catch {
+    return { error: "We couldn’t check your session. Please try again shortly." } as const;
+  }
+  if (access.kind !== "allowed") redirect("/login");
+  return { error: "" } as const;
+}
 
 export async function updateSettings(
   _previous: SettingsState,
   formData: FormData,
 ): Promise<SettingsState> {
-  if (getConfig().mock) return { error: "Settings are not used in demo mode." };
-  let access;
-  try {
-    access = await getAccess();
-  } catch {
-    return { error: "We couldn’t check your session. Please try again shortly." };
-  }
-  if (access.kind !== "allowed") redirect("/login");
+  const gate = await requireOwner();
+  if (gate.error) return { error: gate.error };
   try {
     const areas = parseAreas(String(formData.get("areas") || ""));
     const webhookUrl = String(formData.get("webhookUrl") || "").trim();
+    const secretRaw = String(formData.get("webhookSecret") || "");
     if (webhookUrl && !isWebUrl(webhookUrl))
       return { error: "Use an HTTP or HTTPS webhook URL without credentials." };
-    await updateWorkspaceSettings({ areas, webhookUrl });
+    if (secretRaw && (secretRaw !== secretRaw.trim() || /[\r\n]/.test(secretRaw)))
+      return { error: "Webhook secret must be a single line of 16 to 256 characters." };
+    const webhookSecret = secretRaw.trim();
+    if (webhookSecret && (webhookSecret.length < 16 || webhookSecret.length > 256))
+      return { error: "Webhook secret must be a single line of 16 to 256 characters." };
+    await updateWorkspaceSettings({
+      areas,
+      webhookUrl,
+      ...(webhookSecret ? { webhookSecret } : {}),
+    });
+    revalidatePath("/settings");
+    revalidatePath("/");
     return { saved: true };
   } catch (error) {
     if (isAppError(error)) return { error: error.message };
     return { error: "We couldn’t save settings. Please try again." };
+  }
+}
+
+export async function sendWebhookTest(
+  _previous: WebhookTestState,
+  formData: FormData,
+): Promise<WebhookTestState> {
+  // The test form has no fields. Touch the payload so the action signature stays used.
+  formData.get("intent");
+  const gate = await requireOwner();
+  if (gate.error) return { error: gate.error };
+  try {
+    const result = await probeAnswerWebhook();
+    const health = (await readPublicWebhookHealth()) ?? undefined;
+    revalidatePath("/settings");
+    revalidatePath("/");
+    if (!result.ok) return { error: result.error, health };
+    return { ok: true, health };
+  } catch (error) {
+    if (isAppError(error)) return { error: error.message };
+    return { error: "The test notification could not be sent." };
   }
 }

@@ -1,6 +1,8 @@
 import "server-only";
 import { Query, TablesDB, type Models } from "node-appwrite";
+import { getConfig } from "../config";
 import { AppError, DEFAULT_AREAS, parseAreas } from "../domain";
+import { persistableWebhookError, webhookUrlHash, type WebhookKind } from "../webhook-status";
 import { createAdminClient } from "./admin";
 import { ALLOWED_EMAILS_TABLE, DATABASE_ID, SETTINGS_ROW_ID, SETTINGS_TABLE } from "./ids";
 
@@ -11,6 +13,11 @@ export type AppSettings = {
   agentApiKeyHash: string;
   webhookUrl: string;
   webhookSecret: string;
+  webhookLastOutcome: string;
+  webhookLastAt: string | null;
+  webhookLastError: string;
+  webhookLastKind: string;
+  webhookLastUrlHash: string;
   setupComplete: boolean;
 };
 
@@ -22,6 +29,11 @@ type SettingsRow = Models.Row & {
   agent_api_key_hash?: string;
   webhook_url?: string;
   webhook_secret?: string;
+  webhook_last_outcome?: string;
+  webhook_last_at?: string | null;
+  webhook_last_error?: string;
+  webhook_last_kind?: string;
+  webhook_last_url_hash?: string;
   setup_complete?: boolean;
 };
 
@@ -33,9 +45,22 @@ function fromRow(row: SettingsRow): AppSettings {
     agentApiKeyHash: row.agent_api_key_hash || "",
     webhookUrl: row.webhook_url || "",
     webhookSecret: row.webhook_secret || "",
+    webhookLastOutcome: row.webhook_last_outcome || "",
+    webhookLastAt: row.webhook_last_at || null,
+    webhookLastError: row.webhook_last_error || "",
+    webhookLastKind: row.webhook_last_kind || "",
+    webhookLastUrlHash: row.webhook_last_url_hash || "",
     setupComplete: Boolean(row.setup_complete),
   };
 }
+
+const CLEARED_WEBHOOK_STATUS = {
+  webhook_last_outcome: "",
+  webhook_last_at: null,
+  webhook_last_error: "",
+  webhook_last_kind: "",
+  webhook_last_url_hash: "",
+};
 
 export async function getSettings(): Promise<AppSettings | null> {
   const tables = new TablesDB(await createAdminClient());
@@ -75,13 +100,34 @@ export async function isEmailAllowed(email: string) {
   return list.includes(email.trim().toLowerCase());
 }
 
-export async function updateWorkspaceSettings(input: { areas?: string[]; webhookUrl?: string }) {
+export async function updateWorkspaceSettings(input: {
+  areas?: string[];
+  webhookUrl?: string;
+  webhookSecret?: string;
+}) {
   const tables = new TablesDB(await createAdminClient());
   const current = await getSettings();
   if (!current?.setupComplete) throw new AppError("Finish first-run setup first.", 409);
   const data: Record<string, unknown> = {};
+  let resetDelivery = false;
   if (input.areas) data.areas = input.areas;
-  if (input.webhookUrl !== undefined) data.webhook_url = input.webhookUrl;
+  if (input.webhookUrl !== undefined) {
+    data.webhook_url = input.webhookUrl;
+    if (input.webhookUrl !== current.webhookUrl) resetDelivery = true;
+  }
+  if (input.webhookSecret) {
+    const secret = input.webhookSecret;
+    if (
+      secret !== secret.trim() ||
+      /[\r\n]/.test(secret) ||
+      secret.length < 16 ||
+      secret.length > 256
+    )
+      throw new AppError("Webhook secret must be a single line of 16 to 256 characters.");
+    data.webhook_secret = secret;
+    resetDelivery = true;
+  }
+  if (resetDelivery) Object.assign(data, CLEARED_WEBHOOK_STATUS);
   if (!Object.keys(data).length) return current;
   await tables.updateRow({
     databaseId: DATABASE_ID,
@@ -90,4 +136,29 @@ export async function updateWorkspaceSettings(input: { areas?: string[]; webhook
     data,
   });
   return (await getSettings())!;
+}
+
+/** Records a delivery or test against the settings row. The secret is never written here. */
+export async function recordWebhookAttempt(input: {
+  url: string;
+  outcome: "succeeded" | "failed";
+  error: string;
+  kind: WebhookKind;
+  at: string;
+}) {
+  if (getConfig().mock) return;
+  const tables = new TablesDB(await createAdminClient());
+  const error = persistableWebhookError(input.error);
+  await tables.updateRow({
+    databaseId: DATABASE_ID,
+    tableId: SETTINGS_TABLE,
+    rowId: SETTINGS_ROW_ID,
+    data: {
+      webhook_last_outcome: input.outcome,
+      webhook_last_at: input.at,
+      webhook_last_error: input.outcome === "succeeded" ? "" : error,
+      webhook_last_kind: input.kind,
+      webhook_last_url_hash: webhookUrlHash(input.url),
+    },
+  });
 }

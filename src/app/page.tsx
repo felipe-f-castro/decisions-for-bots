@@ -4,6 +4,7 @@ import { getAccess, type Access } from "@/lib/auth";
 import { getStore } from "@/lib/store";
 import { AREAS, type Decision } from "@/lib/domain";
 import { getDecisionAreas } from "@/lib/appwrite/settings";
+import { readPublicWebhookHealth } from "@/lib/webhook-health";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,9 @@ export default async function Home() {
   } catch {
     initialError = "We couldn’t load your inbox. Please try refreshing in a moment.";
   }
-  const areas = access.kind === "demo" ? [...AREAS] : await getDecisionAreas().catch(() => [...AREAS]);
+  const areas =
+    access.kind === "demo" ? [...AREAS] : await getDecisionAreas().catch(() => [...AREAS]);
+  const webhookHealth = access.kind === "demo" ? null : await readPublicWebhookHealth();
   // This dynamic Server Component samples the request time once for hydration.
   // eslint-disable-next-line react-hooks/purity
   const initialNow = Date.now();
@@ -35,6 +38,7 @@ export default async function Home() {
       initialNow={initialNow}
       initialDecisions={initialDecisions}
       initialError={initialError}
+      webhookHealth={webhookHealth}
     />
   );
 }

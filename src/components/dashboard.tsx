@@ -34,9 +34,12 @@ import {
   type NewDecision,
 } from "@/lib/domain";
 import { isUrgent, TIME_ZONE } from "@/lib/time";
+import { webhookHealthKey } from "@/lib/webhook-instructions";
+import type { PublicWebhookHealth } from "@/lib/webhook-status";
 import { Brand } from "./brand";
 import { AddDecision } from "./add-decision";
 import { AnsweredCard, DecisionCard } from "./decision-card";
+import { WebhookStatus } from "./webhook-status";
 
 type Filter = "All" | Area;
 type Toast = { title: string; undo?: { id: string; mutation: Mutation } };
@@ -47,12 +50,14 @@ export function Dashboard({
   initialNow,
   initialDecisions,
   initialError = "",
+  webhookHealth = null,
 }: {
   mode: "demo" | "appwrite";
   areas?: readonly string[];
   initialNow: number;
   initialDecisions?: Decision[];
   initialError?: string;
+  webhookHealth?: PublicWebhookHealth | null;
 }) {
   const [decisions, setDecisions] = useState<Decision[]>(initialDecisions ?? []);
   const [loading, setLoading] = useState(!initialDecisions);
@@ -413,6 +418,9 @@ export function Dashboard({
               <strong>Demo mode</strong>
               <span>Try it freely. This inbox is public and resets when the server restarts.</span>
             </div>
+          )}
+          {webhookHealth && (
+            <WebhookStatus key={webhookHealthKey(webhookHealth)} health={webhookHealth} compact />
           )}
           <div className="page-heading">
             <div className="heading-copy">

@@ -2652,3 +2652,97 @@ svg {
   font-size: 10px;
   overflow-wrap: anywhere;
 }
+.settings-page {
+  max-width: 720px;
+}
+.webhook-status {
+  border: 1px solid #e1e6dd;
+  border-radius: 12px;
+  background: #f8faf4;
+  padding: 14px 16px;
+  margin: 0 0 22px;
+}
+.webhook-status p {
+  margin: 0;
+}
+.webhook-status strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: 4px;
+}
+.webhook-status p > span {
+  display: block;
+  color: #5f7151;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.webhook-unconfigured {
+  background: #f6f7f4;
+}
+.webhook-unknown {
+  background: #faf6e9;
+  border-color: #e2dcc6;
+}
+.webhook-unknown strong {
+  color: #786b4c;
+}
+.webhook-ok {
+  background: #f3f7ef;
+  border-color: #d5e2cc;
+}
+.webhook-ok strong {
+  color: #3f6840;
+}
+.webhook-failed {
+  background: #fff4ee;
+  border-color: #eedbcf;
+}
+.webhook-failed strong {
+  color: #b25c43;
+}
+.webhook-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+.webhook-actions .button,
+.webhook-actions .text-button {
+  min-height: 36px;
+  font-size: 12px;
+}
+.webhook-instructions {
+  margin-top: 12px;
+}
+.webhook-instructions > p {
+  color: #5f7151;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.webhook-instructions pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.5;
+  background: #fff;
+  border: 1px solid #e1e6dd;
+  border-radius: 8px;
+  padding: 12px;
+  margin: 0 0 10px;
+  color: #3d4a38;
+}
+.webhook-compact {
+  margin-bottom: 18px;
+}
+@media (max-width: 720px) {
+  .webhook-actions .button,
+  .webhook-actions .text-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
