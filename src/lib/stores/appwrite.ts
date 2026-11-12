@@ -5,7 +5,6 @@ import { InputFile } from "node-appwrite/file";
 import { getConfig } from "../config";
 import {
   AppError,
-  isAppError,
   applyMutation,
   validateDecisionId,
   type Decision,
@@ -320,6 +319,7 @@ export class AppwriteStore implements DecisionStore {
     const current = await this.row(id);
     const stored: { bucket: string; fileId: string }[] = [];
     const storage = await this.storage();
+    let committed = false;
     try {
       const attachments = [];
       for (const upload of validated) {
@@ -353,22 +353,21 @@ export class AppwriteStore implements DecisionStore {
         data,
         queries: [Query.equal("$id", id), Query.equal("version", current.version)],
       });
-      if (!result.total) {
-        await this.deleteStored(stored);
+      if (!result.total)
         throw new AppError("This decision changed or is locked. Refresh before trying again.", 409);
-      }
+      committed = true;
+      const kept = new Set(updated.answerMedia.map((item) => item.id));
       const previous = [
         current.answer_image_id ? { bucket: IMAGE_BUCKET, fileId: current.answer_image_id } : null,
         current.answer_audio_id ? { bucket: AUDIO_BUCKET, fileId: current.answer_audio_id } : null,
       ].filter((file): file is { bucket: string; fileId: string } =>
-        Boolean(file && !stored.some((item) => item.fileId === file.fileId)),
+        Boolean(file && !kept.has(file.fileId)),
       );
       await this.deleteStored(previous);
       const row = result.rows?.[0] ?? { ...current, ...data };
       return (await this.signed([row]))[0];
     } catch (error) {
-      if (stored.length && !(isAppError(error) && error.status === 409))
-        await this.deleteStored(stored);
+      if (!committed) await this.deleteStored(stored);
       throw error;
     }
   }

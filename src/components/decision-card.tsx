@@ -18,7 +18,15 @@ import {
   Square,
   Palette,
 } from "lucide-react";
-import { answerSummary, areaTone, formatDuration, type Area, type Decision } from "@/lib/domain";
+import {
+  answerSummary,
+  areaTone,
+  formatDuration,
+  MAX_AUDIO_SECONDS,
+  recordedDuration,
+  type Area,
+  type Decision,
+} from "@/lib/domain";
 import { deadlineLabel, fullDate, isUrgent } from "@/lib/time";
 
 export function AreaBadge({ area }: { area: Area }) {
@@ -209,7 +217,7 @@ function AnswerControls({
           },
         );
         if (!alive.current) return;
-        takeAudio(file, (Date.now() - started) / 1000);
+        takeAudio(file, recordedDuration((Date.now() - started) / 1000));
         setRecording(false);
       };
       recorder.current = rec;
@@ -222,8 +230,8 @@ function AnswerControls({
           window.clearInterval(timer);
           return;
         }
-        setElapsed(seconds);
-        if (seconds >= 300) rec.stop();
+        setElapsed(recordedDuration(seconds));
+        if (seconds >= MAX_AUDIO_SECONDS - 0.5) rec.stop();
       }, 250);
       rec.addEventListener("stop", () => window.clearInterval(timer), { once: true });
     } catch {

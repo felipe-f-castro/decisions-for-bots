@@ -219,6 +219,14 @@ export function parseMutation(input: unknown, options?: { allowEmptyAnswer?: boo
   };
 }
 
+export const MAX_AUDIO_SECONDS = 300;
+
+/** Duration a browser recording may report. Auto-stop can land slightly after the cap. */
+export function recordedDuration(elapsedSeconds: number) {
+  if (!Number.isFinite(elapsedSeconds) || elapsedSeconds <= 0) return 0;
+  return Math.min(MAX_AUDIO_SECONDS, elapsedSeconds);
+}
+
 export function formatDuration(seconds: number) {
   const total = Math.max(0, Math.round(seconds));
   const minutes = Math.floor(total / 60);

@@ -1,10 +1,15 @@
 import { AUDIO_BUCKET } from "./appwrite/ids";
-import { AppError, type AnswerAttachment, type AnswerMedia, type Decision } from "./domain";
+import {
+  AppError,
+  MAX_AUDIO_SECONDS,
+  type AnswerAttachment,
+  type AnswerMedia,
+  type Decision,
+} from "./domain";
 import { validateImage, type ImageUpload } from "./images";
 
-export { AUDIO_BUCKET };
+export { AUDIO_BUCKET, MAX_AUDIO_SECONDS };
 export const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
-export const MAX_AUDIO_SECONDS = 300;
 export const MAX_ANSWER_BODY_BYTES = 12 * 1024 * 1024;
 
 export interface AnswerUpload {

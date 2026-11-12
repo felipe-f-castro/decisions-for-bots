@@ -6,7 +6,7 @@ import { GET as AGENT_LIST, POST as AGENT_POST } from "@/app/api/agent/decisions
 import { GET as AGENT_GET, DELETE as AGENT_DELETE } from "@/app/api/agent/decisions/[id]/route";
 import { GET as AGENT_MEDIA } from "@/app/api/agent/decisions/[id]/media/[fileId]/route";
 import { getAccess } from "@/lib/auth";
-import { applyMutation, answerSummary } from "@/lib/domain";
+import { applyMutation, answerSummary, recordedDuration } from "@/lib/domain";
 import { validateAudio } from "@/lib/media";
 import { webhookSetupInstructions } from "@/lib/webhook-instructions";
 import { MockStore } from "@/lib/stores/mock";
@@ -164,6 +164,16 @@ describe("answer media", () => {
         durationSeconds: 301,
       }),
     ).toThrow(/5 minutes/);
+    expect(recordedDuration(300.4)).toBe(300);
+    expect(recordedDuration(299.6)).toBe(299.6);
+    expect(() =>
+      validateAudio({
+        bytes: webm,
+        contentType: "audio/webm",
+        filename: "capped.webm",
+        durationSeconds: recordedDuration(300.4),
+      }),
+    ).not.toThrow();
   });
 
   it("serves answer media to the signed-in owner and the agent, and includes it on the webhook", async () => {

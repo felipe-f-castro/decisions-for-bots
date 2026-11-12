@@ -216,4 +216,51 @@ describe("Appwrite store versioning", () => {
     expect(state.files.has(image.id)).toBe(false);
     expect(state.files.has(audio.id)).toBe(false);
   });
+
+  it("keeps answer files when routing and deletes a rejected upload", async () => {
+    const store = new AppwriteStore();
+    const created = await store.create(input);
+    const webm = Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3, 0x01]);
+    const upload = {
+      kind: "audio" as const,
+      bytes: webm,
+      contentType: "audio/webm",
+      filename: "note.webm",
+      alt: "",
+      durationSeconds: 1.5,
+    };
+    const answered = await store.mutate(
+      created.id,
+      { action: "answer", answer: "", custom: true, expectedRevision: created.revision },
+      [upload],
+    );
+    const kept = answered.answerMedia.map((item) => item.id);
+    const routed = await store.mutate(created.id, {
+      action: "route",
+      expectedRevision: answered.revision,
+    });
+    expect(routed.status).toBe("Routed");
+    expect(routed.answerMedia.map((item) => item.id)).toEqual(kept);
+    expect(kept.every((id) => state.files.has(id))).toBe(true);
+
+    const before = new Set(state.files.keys());
+    await expect(
+      store.mutate(
+        created.id,
+        { action: "answer", answer: "", custom: true, expectedRevision: created.revision },
+        [upload],
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      store.mutate(
+        created.id,
+        { action: "answer", answer: "", custom: true, expectedRevision: routed.revision },
+        [upload],
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(new Set(state.files.keys())).toEqual(before);
+    expect(await store.readAnswerMedia(created.id, kept[0])).toMatchObject({
+      contentType: "audio/webm",
+    });
+  });
 });
