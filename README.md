@@ -117,11 +117,12 @@ Important coverage includes setup locking, the installation token, sign-in allow
 
 - Never commit `.env`, `.env.local`, `.appwrite`, API keys, webhook secrets, installation tokens, or personal emails or decision data.
 - `.env.example` contains placeholders only.
-- `/setup` requires `SETUP_TOKEN`. After setup completes, another request cannot change the owner, password, webhook, or secrets. Unset the token when you are done.
+- `/setup` requires `SETUP_TOKEN`. After setup completes, another request cannot change the owner, password, webhook, or secrets. A failed attempt releases its unfinished claim, including the email it reserved. An expired unfinished claim can be continued with another email. An in-progress claim and a finished workspace stay as they are. Unset the token when you are done.
+- Sign-in, account creation, and setup-token limits are per process. On an Appwrite Site, the address is `x-appwrite-client-ip`, which the platform replaces. Elsewhere, attempts share one bucket. Setup-token checks also stop at a higher process-wide total.
 - An existing Appwrite password is changed only after the current password is checked, and only through that password. The admin API is not used to replace it.
 - Only the workspace owner can change areas and the webhook URL. The signing secret is not shown again and is not returned to other members.
 - Webhook URLs must be public HTTPS. Loopback, private, link-local, and reserved addresses are rejected. Demo mode does not send webhooks.
-- Sign-in and admin account creation are throttled in the application.
+- Sign-in and admin account creation are throttled per email as well as per address. The per-email limits stay in place when the address is shared.
 - The agent credential stored at setup (SHA-256 hash) is the only accepted key once it exists. `AGENT_API_KEY` works in demo mode, or before a hash exists when `AGENT_API_KEY_FALLBACK=1`. Replace the stored hash to rotate or revoke that key. Unset the env var and the fallback flag to revoke the env key. Clearing the hash does not by itself disable a fallback you left enabled.
 - The first-run setup page is the only place a new owner is created. After that, unknown emails cannot sign up.
 - Image files are stored in a private bucket; list/get responses include short-lived view URLs.

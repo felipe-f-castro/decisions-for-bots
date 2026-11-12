@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppError } from "@/lib/domain";
 import { parseSetupInput, completeSetup } from "@/lib/setup";
 import { hashToken } from "@/lib/crypto";
-import { assertAccountCreationAllowed, resetAuthThrottles } from "@/lib/throttle";
+import {
+  assertAccountCreationAllowed,
+  resetAuthThrottles,
+  SETUP_TOKEN_WINDOW_MS,
+} from "@/lib/throttle";
 import { appwriteEnv } from "./fixtures";
 
 const TOKEN = "fixture-setup-token-with-enough-length";
@@ -24,6 +28,7 @@ const { tables, users, project, account, state } = vi.hoisted(() => ({
     create: vi.fn(),
     updatePassword: vi.fn(),
     updateEmailVerification: vi.fn(),
+    deleteSession: vi.fn(),
   },
   project: { updateAuthLimit: vi.fn(), updateUserLimitPolicy: vi.fn() },
   account: {
@@ -80,6 +85,7 @@ vi.mock("node-appwrite", () => ({
     create = users.create;
     updatePassword = users.updatePassword;
     updateEmailVerification = users.updateEmailVerification;
+    deleteSession = users.deleteSession;
   },
   Account: class {
     createEmailPasswordSession = account.createEmailPasswordSession;
@@ -147,6 +153,7 @@ beforeEach(() => {
   users.list.mockResolvedValue({ total: 0, users: [] });
   users.create.mockResolvedValue({ $id: "generated-user-id", email: "owner@example.com" });
   users.updateEmailVerification.mockResolvedValue({});
+  users.deleteSession.mockResolvedValue({});
   account.createEmailPasswordSession.mockResolvedValue({
     $id: "session-1",
     secret: "session-secret",
@@ -307,7 +314,11 @@ describe("setup lock", () => {
       password: "a strong password",
       oldPassword: "current password",
     });
-    expect(account.deleteSession).toHaveBeenCalledWith({ sessionId: "session-1" });
+    expect(users.deleteSession).toHaveBeenCalledWith({
+      userId: "existing-user",
+      sessionId: "session-1",
+    });
+    expect(account.deleteSession).not.toHaveBeenCalled();
     expect(state.row?.agent_api_key_hash).toBe(hashToken(done.agentApiKey));
   });
 
@@ -319,7 +330,34 @@ describe("setup lock", () => {
     await completeSetup({ ...input, currentPassword: input.password });
     expect(account.updatePassword).not.toHaveBeenCalled();
     expect(users.updatePassword).not.toHaveBeenCalled();
+    expect(users.deleteSession).toHaveBeenCalledWith({
+      userId: "existing-user",
+      sessionId: "session-1",
+    });
     expect(state.row?.setup_complete).toBe(true);
+  });
+
+  it("finishes setup when verification-session cleanup fails", async () => {
+    users.list.mockResolvedValue({
+      total: 1,
+      users: [{ $id: "existing-user", email: "owner@example.com" }],
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    users.deleteSession.mockRejectedValueOnce(
+      Object.assign(new Error("session-secret leaked in the message"), { code: 503 }),
+    );
+    const done = await completeSetup({ ...input, currentPassword: input.password });
+    expect(done.agentApiKey).toBeTruthy();
+    expect(state.row?.setup_complete).toBe(true);
+    expect(users.deleteSession).toHaveBeenCalledWith({
+      userId: "existing-user",
+      sessionId: "session-1",
+    });
+    expect(account.deleteSession).not.toHaveBeenCalled();
+    const logs = JSON.stringify(warn.mock.calls);
+    expect(logs).not.toContain("session-secret");
+    expect(logs).toContain("503");
+    warn.mockRestore();
   });
 
   it("stops admin account creation after repeated attempts", async () => {
@@ -329,6 +367,113 @@ describe("setup lock", () => {
     await expect(completeSetup(input)).rejects.toMatchObject({ status: 429 });
     expect(users.create).not.toHaveBeenCalled();
     expect(state.row?.setup_complete).not.toBe(true);
+  });
+
+  it("throttles installation token failures and recovers after the window", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const wrong = { ...input, setupToken: "wrong-token-but-long-enough-value" };
+    try {
+      for (let attempt = 0; attempt < 5; attempt++)
+        await expect(completeSetup(wrong)).rejects.toMatchObject({ status: 403 });
+      await expect(completeSetup(wrong)).rejects.toMatchObject({ status: 429 });
+      expect(users.create).not.toHaveBeenCalled();
+      expect(state.row).toBeNull();
+      vi.setSystemTime(new Date(Date.now() + SETUP_TOKEN_WINDOW_MS));
+      await expect(completeSetup(wrong)).rejects.toMatchObject({ status: 403 });
+      expect(state.row).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets a released unfinished claim use a different email", async () => {
+    users.create.mockRejectedValueOnce(new Error("unavailable"));
+    await expect(completeSetup(input)).rejects.toThrow(/unavailable/);
+    expect(state.row).toMatchObject({
+      setup_complete: false,
+      owner_email: "",
+      setup_claim: "",
+    });
+    const done = await completeSetup({
+      ...input,
+      email: "other@example.com",
+      password: "another strong password",
+    });
+    expect(state.row).toMatchObject({
+      setup_complete: true,
+      owner_email: "other@example.com",
+      agent_api_key_hash: hashToken(done.agentApiKey),
+    });
+  });
+
+  it("refuses another email while a claim is still active", async () => {
+    state.row = {
+      $id: "app",
+      setup_complete: false,
+      owner_email: "first@example.com",
+      setup_claim: "claim-a",
+      setup_claim_until: new Date(Date.now() + 60_000).toISOString(),
+      owner_user_id: "",
+      agent_api_key_hash: "",
+      webhook_url: "",
+      webhook_secret: "",
+    };
+    await expect(
+      completeSetup({ ...input, email: "other@example.com", password: "another strong password" }),
+    ).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/in progress/) });
+    expect(state.row).toMatchObject({
+      owner_email: "first@example.com",
+      setup_claim: "claim-a",
+      setup_complete: false,
+    });
+    expect(users.create).not.toHaveBeenCalled();
+  });
+
+  it("lets an expired claim change email and ignores the old claim afterwards", async () => {
+    state.row = {
+      $id: "app",
+      setup_complete: false,
+      owner_email: "first@example.com",
+      setup_claim: "claim-a",
+      setup_claim_until: new Date(Date.now() - 1000).toISOString(),
+      owner_user_id: "",
+      agent_api_key_hash: "",
+      webhook_url: "",
+      webhook_secret: "",
+    };
+    let releaseList: (() => void) | undefined;
+    let listed = 0;
+    users.list.mockImplementation(async () => {
+      listed += 1;
+      if (listed === 1) await new Promise<void>((resolve) => (releaseList = resolve));
+      return { total: 0, users: [] };
+    });
+    const first = completeSetup(input);
+    await vi.waitFor(() => expect(releaseList).toEqual(expect.any(Function)));
+    const held = state.row?.setup_claim;
+    expect(held).toBeTruthy();
+    expect(held).not.toBe("claim-a");
+    state.row = {
+      ...state.row,
+      setup_claim_until: new Date(Date.now() - 1000).toISOString(),
+    };
+    const second = await completeSetup({
+      ...input,
+      email: "other@example.com",
+      password: "another strong password",
+    });
+    const replacement = { ...state.row };
+    expect(replacement).toMatchObject({
+      setup_complete: true,
+      owner_email: "other@example.com",
+      agent_api_key_hash: hashToken(second.agentApiKey),
+      webhook_secret: second.webhookSecret,
+    });
+    expect(replacement.setup_claim).not.toBe(held);
+    releaseList?.();
+    await expect(first).rejects.toMatchObject({ status: 409 });
+    expect(state.row).toEqual(replacement);
   });
 
   it("does not treat a settings read failure as an empty workspace", async () => {
