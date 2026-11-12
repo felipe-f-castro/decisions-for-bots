@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { ArrowRight, KeyRound, Link2, Mail, Tags } from "lucide-react";
+import { ArrowRight, KeyRound, Link2, Mail, ShieldCheck, Tags } from "lucide-react";
 import { runSetup } from "@/app/actions";
 import { DEFAULT_AREAS } from "@/lib/domain";
 
@@ -23,7 +23,8 @@ export function SetupForm() {
         <label htmlFor="webhook-secret">Webhook secret</label>
         <textarea id="webhook-secret" readOnly rows={2} value={state.webhookSecret} />
         <p className="field-hint">
-          Used for <code>X-Decisions-Signature</code> and the webhook <code>Authorization</code> header.
+          Used for <code>X-Decisions-Signature</code> and the webhook <code>Authorization</code>{" "}
+          header.
         </p>
         <a className="button button-primary login-submit" href="/login">
           I have saved these. Continue to sign in
@@ -34,6 +35,22 @@ export function SetupForm() {
   }
   return (
     <form action={action} className="login-form">
+      <label htmlFor="setupToken">Installation token</label>
+      <div className="email-input">
+        <ShieldCheck size={17} aria-hidden="true" />
+        <input
+          id="setupToken"
+          name="setupToken"
+          type="password"
+          required
+          autoComplete="off"
+          minLength={32}
+          maxLength={256}
+        />
+      </div>
+      <p className="field-hint">
+        The server <code>SETUP_TOKEN</code>. This proves you can configure the deployment.
+      </p>
       <label htmlFor="email">Owner email</label>
       <div className="email-input">
         <Mail size={17} aria-hidden="true" />
@@ -74,6 +91,23 @@ export function SetupForm() {
         />
       </div>
       <p className="field-hint">At least {PASSWORD_MIN} characters.</p>
+      <label htmlFor="currentPassword">
+        Current Appwrite password <span className="optional">if the account exists</span>
+      </label>
+      <div className="email-input">
+        <KeyRound size={17} aria-hidden="true" />
+        <input
+          id="currentPassword"
+          name="currentPassword"
+          type="password"
+          autoComplete="current-password"
+          maxLength={72}
+        />
+      </div>
+      <p className="field-hint">
+        Required when this email already has an Appwrite account. Setup will not replace that
+        password unless this value is correct.
+      </p>
       <label htmlFor="areas">Decision areas</label>
       <div className="email-input">
         <Tags size={17} aria-hidden="true" />
@@ -99,6 +133,7 @@ export function SetupForm() {
           placeholder="https://example.com/hooks/decisions"
         />
       </div>
+      <p className="field-hint">Public HTTPS only, with no credentials. Leave blank to skip.</p>
       {state && "error" in state && state.error && (
         <p className="form-error" role="alert">
           {state.error}

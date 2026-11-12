@@ -1,19 +1,19 @@
 import "server-only";
 import { AppError } from "./domain";
-
-function trim(value: string | undefined) {
-  return value?.trim() || "";
-}
+import { envFlag, readEnv } from "./env";
 
 export function getConfig() {
   const endpoint =
-    trim(process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT) ||
-    trim(process.env.APPWRITE_SITE_API_ENDPOINT);
+    readEnv("NEXT_PUBLIC_APPWRITE_ENDPOINT") || readEnv("APPWRITE_SITE_API_ENDPOINT");
   const projectId =
-    trim(process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID) ||
-    trim(process.env.APPWRITE_SITE_PROJECT_ID);
-  const apiKey = trim(process.env.APPWRITE_API_KEY);
-  const mock = !endpoint && !projectId && !apiKey;
+    readEnv("NEXT_PUBLIC_APPWRITE_PROJECT_ID") || readEnv("APPWRITE_SITE_PROJECT_ID");
+  const apiKey = readEnv("APPWRITE_API_KEY");
+  const configured = Boolean(endpoint || projectId || apiKey);
+  // Demo is opt-in and never a production fallback. A production process with
+  // no Appwrite configuration fails closed instead of serving the in-memory inbox.
+  const mock = !configured && process.env.NODE_ENV !== "production" && envFlag("DECISIONS_DEMO");
+  if (!configured && !mock)
+    throw new AppError("Complete the Appwrite configuration. See README.md.", 503);
   if (!mock) {
     if (!endpoint || !projectId)
       throw new AppError("Complete the Appwrite configuration. See README.md.", 503);

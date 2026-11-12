@@ -1,26 +1,78 @@
 import { webcrypto } from "node:crypto";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { lookup } from "node:dns/promises";
+import { request as httpsRequest } from "node:https";
 import { NextRequest } from "next/server";
 import { GET, POST } from "@/app/api/decisions/route";
 import { PATCH } from "@/app/api/decisions/[id]/route";
 import { notifyDecisionAnswered } from "@/lib/answer-webhook";
 import { MockStore } from "@/lib/stores/mock";
-import { demoEnv } from "./fixtures";
+import { appwriteEnv, demoEnv } from "./fixtures";
 
 let store: MockStore;
 const url = "https://receiver.example/answer?token=fixture-url-token";
 const secret = "fixture-webhook-secret";
 const fetchMock = vi.fn<typeof fetch>();
 
+const { settings } = vi.hoisted(() => ({
+  settings: { getSettings: vi.fn() },
+}));
+
 vi.mock("@/lib/store", () => ({ getStore: () => store }));
+vi.mock("@/lib/auth", async (original) => ({
+  ...(await original<typeof import("@/lib/auth")>()),
+  getAccess: vi.fn(async () => ({ kind: "demo" as const })),
+}));
+vi.mock("@/lib/appwrite/settings", () => ({
+  getSettings: (...args: unknown[]) => settings.getSettings(...args),
+  getDecisionAreas: async () => ["Design", "Content", "Other"],
+}));
+vi.mock("node:dns/promises", () => ({ lookup: vi.fn() }));
+vi.mock("node:https", () => ({ request: vi.fn() }));
 
 beforeEach(() => {
-  demoEnv();
+  appwriteEnv();
   vi.stubEnv("DECISION_WEBHOOK_URL", url);
   vi.stubEnv("DECISION_WEBHOOK_SECRET", secret);
+  settings.getSettings.mockReset().mockResolvedValue({
+    setupComplete: true,
+    webhookUrl: "",
+    webhookSecret: "",
+  });
+  vi.mocked(lookup).mockReset();
+  vi.mocked(lookup).mockResolvedValue([{ address: "93.184.216.34", family: 4 }] as never);
   store = new MockStore();
   fetchMock.mockReset().mockResolvedValue(new Response(null, { status: 204 }));
-  vi.stubGlobal("fetch", fetchMock);
+  vi.mocked(httpsRequest).mockReset();
+  vi.mocked(httpsRequest).mockImplementation(((
+    options: { servername?: string; path?: string; signal?: AbortSignal; hostname?: string },
+    callback: (response: PassThrough & { statusCode?: number }) => void,
+  ) => {
+    const req = new EventEmitter();
+    return Object.assign(req, {
+      end(body?: string) {
+        Promise.resolve(
+          fetchMock(`https://${options.servername}${options.path}`, {
+            method: "POST",
+            body,
+            headers: (options as { headers?: HeadersInit }).headers,
+            signal: options.signal,
+          }),
+        )
+          .then((response) => {
+            const stream = Object.assign(new PassThrough(), {
+              statusCode: response.status,
+              headers: {},
+            });
+            callback(stream);
+            stream.end();
+          })
+          .catch((error: unknown) => req.emit("error", error));
+      },
+    });
+  }) as never);
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 
@@ -63,7 +115,12 @@ describe("outbound answer webhook", () => {
       expect(fetchMock).toHaveBeenCalledOnce();
       const [destination, init] = fetchMock.mock.calls[0];
       expect(destination).toBe(url);
-      expect(init).toMatchObject({ method: "POST", redirect: "error", cache: "no-store" });
+      expect(init).toMatchObject({ method: "POST" });
+      expect(vi.mocked(httpsRequest).mock.calls[0][0]).toMatchObject({
+        hostname: "93.184.216.34",
+        servername: "receiver.example",
+        method: "POST",
+      });
       expect(JSON.parse(init!.body as string)).toEqual({
         event: "decision.answered",
         decision: {
@@ -119,6 +176,32 @@ describe("outbound answer webhook", () => {
       `sha256=${Buffer.from(digest).toString("hex")}`,
     );
     expect(headers.get("Authorization")).toBe(`Bearer ${secret}`);
+  });
+
+  it("does not follow redirects or contact a private location", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(null, { status: 302, headers: { location: "http://127.0.0.1/latest" } }),
+    );
+    expect((await answer()).status).toBe(200);
+    expect(httpsRequest).toHaveBeenCalledTimes(2);
+    for (const [options] of vi.mocked(httpsRequest).mock.calls) {
+      expect(options).toMatchObject({ hostname: "93.184.216.34", servername: "receiver.example" });
+    }
+  });
+
+  it("does not deliver in demo mode", async () => {
+    demoEnv();
+    vi.stubEnv("DECISION_WEBHOOK_URL", url);
+    vi.stubEnv("DECISION_WEBHOOK_SECRET", secret);
+    expect((await answer()).status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(httpsRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to an environment webhook when settings cannot be read", async () => {
+    settings.getSettings.mockRejectedValue(new Error("settings unavailable"));
+    expect((await answer()).status).toBe(200);
+    expect(httpsRequest).not.toHaveBeenCalled();
   });
 
   it.each([undefined, "", "   "])("is off when the URL is %j", async (value) => {

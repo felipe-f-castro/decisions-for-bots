@@ -30,10 +30,18 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("Appwrite configuration", () => {
-  it("bypasses auth only when all Appwrite credentials are absent", async () => {
+  it("enters demo mode only with an explicit opt-in when Appwrite is unset", async () => {
     expect(getConfig().mock).toBe(true);
     expect(await getAccess()).toEqual({ kind: "demo" });
     expect(session.createSessionAccount).not.toHaveBeenCalled();
+    vi.stubEnv("DECISIONS_DEMO", "");
+    expect(() => getConfig()).toThrow("Complete the Appwrite configuration");
+    vi.stubEnv("DECISIONS_DEMO", "1");
+    vi.stubEnv("NODE_ENV", "production");
+    expect(() => getConfig()).toThrow("Complete the Appwrite configuration");
+  });
+
+  it("does not treat a partial Appwrite configuration as demo mode", () => {
     vi.stubEnv("APPWRITE_API_KEY", "fixture");
     expect(() => getConfig()).toThrow("Complete the Appwrite configuration");
   });
@@ -73,6 +81,12 @@ describe("human authentication", () => {
     expect(checkTokenDigest("agent-token", digest)).toBe(true);
     expect(checkTokenDigest("other-token", digest)).toBe(false);
     expect(checkTokenDigest("agent-token", "not-a-hex-digest")).toBe(false);
+  });
+
+  it("treats a settings outage as unavailable instead of a fresh install", async () => {
+    session.createSessionAccount.mockResolvedValue(null);
+    settings.getSettings.mockRejectedValue(new Error("database unavailable"));
+    await expect(getAccess()).rejects.toThrow("database unavailable");
   });
 
   it("sends visitors to setup until an owner exists", async () => {

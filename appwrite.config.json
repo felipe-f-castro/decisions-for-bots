@@ -97,11 +97,7 @@
           "key": "status",
           "type": "string",
           "format": "enum",
-          "elements": [
-            "open",
-            "answered",
-            "routed"
-          ],
+          "elements": ["open", "answered", "routed"],
           "required": true,
           "array": false
         },
@@ -147,10 +143,7 @@
         {
           "$id": "status_created",
           "type": "key",
-          "attributes": [
-            "status",
-            "$createdAt"
-          ]
+          "attributes": ["status", "$createdAt"]
         }
       ]
     },
@@ -213,6 +206,20 @@
           "type": "boolean",
           "required": true,
           "array": false
+        },
+        {
+          "key": "setup_claim",
+          "type": "string",
+          "size": 64,
+          "required": false,
+          "array": false,
+          "default": ""
+        },
+        {
+          "key": "setup_claim_until",
+          "type": "datetime",
+          "required": false,
+          "array": false
         }
       ],
       "indexes": []
@@ -237,9 +244,7 @@
         {
           "$id": "email_unique",
           "type": "unique",
-          "attributes": [
-            "email"
-          ]
+          "attributes": ["email"]
         }
       ]
     }
@@ -250,13 +255,7 @@
       "name": "decision-images",
       "enabled": true,
       "maximumFileSize": 3145728,
-      "allowedFileExtensions": [
-        "jpg",
-        "jpeg",
-        "png",
-        "webp",
-        "gif"
-      ],
+      "allowedFileExtensions": ["jpg", "jpeg", "png", "webp", "gif"],
       "encryption": false,
       "antivirus": false,
       "fileSecurity": false,

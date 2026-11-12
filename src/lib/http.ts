@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkToken, checkTokenDigest, getAccess } from "./auth";
 import { getConfig } from "./config";
 import { AppError, AREAS, isAppError, parseNewDecision } from "./domain";
+import { envFlag, readEnv } from "./env";
 import { MAX_IMAGE_BYTES, MAX_UPLOAD_BODY_BYTES, validateImage } from "./images";
 import { getDecisionAreas, getSettings } from "./appwrite/settings";
 
@@ -47,20 +48,38 @@ export function requireJson(request: NextRequest) {
     throw new AppError("Send JSON with Content-Type: application/json.", 415);
 }
 
+const AGENT_AUTH_ERROR = "A valid agent bearer token is required.";
+
+function acceptEnvAgentKey(candidate: string) {
+  const expected = readEnv("AGENT_API_KEY");
+  return Boolean(expected) && checkToken(candidate, expected);
+}
+
 export async function authorizeAgent(request: NextRequest) {
   const authorization = request.headers.get("authorization") || "";
   const match = /^Bearer ([^\s]+)$/i.exec(authorization);
   const candidate = match?.[1] || "";
-  if (!candidate || candidate.length > 1024)
-    throw new AppError("A valid agent bearer token is required.", 401);
-  if (!getConfig().mock) {
-    const settings = await getSettings().catch(() => null);
-    if (settings?.agentApiKeyHash && checkTokenDigest(candidate, settings.agentApiKeyHash))
-      return;
+  if (!candidate || candidate.length > 1024) throw new AppError(AGENT_AUTH_ERROR, 401);
+  // Demo has no database credential. The demo opt-in is the explicit switch.
+  if (getConfig().mock) {
+    if (acceptEnvAgentKey(candidate)) return;
+    throw new AppError(AGENT_AUTH_ERROR, 401);
   }
-  const expected = process.env.AGENT_API_KEY?.trim();
-  if (expected && checkToken(candidate, expected)) return;
-  throw new AppError("A valid agent bearer token is required.", 401);
+  let settings;
+  try {
+    settings = await getSettings();
+  } catch {
+    // A settings outage must not fall open to the environment key.
+    throw new AppError("Agent authentication is temporarily unavailable.", 503);
+  }
+  if (settings?.agentApiKeyHash) {
+    if (checkTokenDigest(candidate, settings.agentApiKeyHash)) return;
+    throw new AppError(AGENT_AUTH_ERROR, 401);
+  }
+  // The environment key applies only when no database credential exists and
+  // the operator explicitly enabled the fallback. It never sits beside the hash.
+  if (envFlag("AGENT_API_KEY_FALLBACK") && acceptEnvAgentKey(candidate)) return;
+  throw new AppError(AGENT_AUTH_ERROR, 401);
 }
 
 async function readBody(request: NextRequest, max: number) {

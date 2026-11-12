@@ -10,8 +10,12 @@ export function demoEnv() {
     "AGENT_API_KEY",
     "DECISION_WEBHOOK_URL",
     "DECISION_WEBHOOK_SECRET",
+    "SETUP_TOKEN",
+    "AGENT_API_KEY_FALLBACK",
+    "DECISIONS_DEMO",
   ])
     vi.stubEnv(name, "");
+  vi.stubEnv("DECISIONS_DEMO", "1");
 }
 
 export function appwriteEnv() {
