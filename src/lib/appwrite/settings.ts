@@ -1,6 +1,7 @@
 import "server-only";
 import { Query, TablesDB, type Models } from "node-appwrite";
 import { AppError, DEFAULT_AREAS, parseAreas } from "../domain";
+import { resolvePublicWebhook } from "../webhook-url";
 import { createAdminClient } from "./admin";
 import { ALLOWED_EMAILS_TABLE, DATABASE_ID, SETTINGS_ROW_ID, SETTINGS_TABLE } from "./ids";
 
@@ -37,6 +38,19 @@ function fromRow(row: SettingsRow): AppSettings {
   };
 }
 
+function isMissingRow(error: unknown) {
+  return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === 404);
+}
+
+export function isWorkspaceOwner(
+  actor: { userId: string; email: string },
+  settings: Pick<AppSettings, "setupComplete" | "ownerUserId" | "ownerEmail"> | null,
+) {
+  if (!settings?.setupComplete || !actor.userId) return false;
+  if (settings.ownerUserId) return actor.userId === settings.ownerUserId;
+  return Boolean(settings.ownerEmail) && settings.ownerEmail === actor.email.trim().toLowerCase();
+}
+
 export async function getSettings(): Promise<AppSettings | null> {
   const tables = new TablesDB(await createAdminClient());
   try {
@@ -46,8 +60,9 @@ export async function getSettings(): Promise<AppSettings | null> {
       rowId: SETTINGS_ROW_ID,
     });
     return fromRow(row);
-  } catch {
-    return null;
+  } catch (error) {
+    if (isMissingRow(error)) return null;
+    throw error;
   }
 }
 
@@ -75,13 +90,21 @@ export async function isEmailAllowed(email: string) {
   return list.includes(email.trim().toLowerCase());
 }
 
-export async function updateWorkspaceSettings(input: { areas?: string[]; webhookUrl?: string }) {
+export async function updateWorkspaceSettings(
+  actor: { userId: string; email: string },
+  input: { areas?: string[]; webhookUrl?: string },
+) {
   const tables = new TablesDB(await createAdminClient());
   const current = await getSettings();
   if (!current?.setupComplete) throw new AppError("Finish first-run setup first.", 409);
+  if (!isWorkspaceOwner(actor, current))
+    throw new AppError("Only the workspace owner can change these settings.", 403);
   const data: Record<string, unknown> = {};
   if (input.areas) data.areas = input.areas;
-  if (input.webhookUrl !== undefined) data.webhook_url = input.webhookUrl;
+  if (input.webhookUrl !== undefined) {
+    if (input.webhookUrl) await resolvePublicWebhook(input.webhookUrl);
+    data.webhook_url = input.webhookUrl;
+  }
   if (!Object.keys(data).length) return current;
   await tables.updateRow({
     databaseId: DATABASE_ID,
@@ -89,5 +112,7 @@ export async function updateWorkspaceSettings(input: { areas?: string[]; webhook
     rowId: SETTINGS_ROW_ID,
     data,
   });
-  return (await getSettings())!;
+  const updated = await getSettings();
+  if (!updated) throw new AppError("Finish first-run setup first.", 409);
+  return updated;
 }

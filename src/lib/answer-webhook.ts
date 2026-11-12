@@ -1,8 +1,11 @@
 import "server-only";
 import { createHmac } from "node:crypto";
+import { request as httpsRequest } from "node:https";
 import { getConfig } from "./config";
-import { isWebUrl, type Decision } from "./domain";
+import { readEnv } from "./env";
+import type { Decision } from "./domain";
 import { getSettings } from "./appwrite/settings";
+import { resolvePublicWebhook, type ResolvedWebhook } from "./webhook-url";
 
 const EVENT = "decision.answered";
 const TIMEOUT_MS = 3_000;
@@ -27,26 +30,31 @@ export function answerWebhookPayload(decision: Decision) {
 }
 
 async function webhookConfig() {
-  let url = process.env.DECISION_WEBHOOK_URL?.trim() || "";
-  let secret = process.env.DECISION_WEBHOOK_SECRET?.trim() || "";
-  if (!getConfig().mock) {
-    const settings = await getSettings().catch(() => null);
-    if (settings?.webhookUrl?.trim()) url = settings.webhookUrl.trim();
-    if (settings?.webhookSecret?.trim()) secret = settings.webhookSecret.trim();
+  let settings;
+  try {
+    settings = await getSettings();
+  } catch {
+    // Do not fall back to environment webhooks when settings cannot be read.
+    return { url: "", secret: "" };
   }
+  const url = settings?.webhookUrl?.trim() || readEnv("DECISION_WEBHOOK_URL");
+  const secret = settings?.webhookSecret?.trim() || readEnv("DECISION_WEBHOOK_SECRET");
   return { url, secret };
 }
 
 export async function notifyDecisionAnswered(decision: Decision): Promise<void> {
   try {
+    // Demo mode has no outbound integrations. A signed webhook must not leave the process.
+    if (getConfig().mock) return;
     const { url, secret } = await webhookConfig();
     if (!url) return;
-    if (!secret || !isWebUrl(url)) {
+    if (!secret) {
       console.warn(
-        "[Decisions] Answer webhook skipped: configure an HTTP(S) URL without credentials and a nonempty secret.",
+        "[Decisions] Answer webhook skipped: configure a public HTTPS URL without credentials and a nonempty secret.",
       );
       return;
     }
+    const target = await resolvePublicWebhook(url);
     const body = answerWebhookPayload(decision);
     const headers = {
       "Content-Type": "application/json",
@@ -54,35 +62,64 @@ export async function notifyDecisionAnswered(decision: Decision): Promise<void> 
       "X-Decisions-Signature": signAnswerWebhook(body, secret),
       Authorization: `Bearer ${secret}`,
     };
-    await deliverAnswerWebhook(url, body, headers, decision.id);
+    await deliverAnswerWebhook(target, body, headers, decision.id);
   } catch {
     // Configuration or delivery errors must not turn a saved answer into an API error.
     console.warn("[Decisions] Answer webhook could not be delivered.");
   }
 }
 
+function postWebhook(
+  target: ResolvedWebhook,
+  body: string,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+) {
+  const host = target.url.hostname.replace(/^\[|\]$/g, "");
+  return new Promise<number>((resolve, reject) => {
+    const request = httpsRequest(
+      {
+        protocol: "https:",
+        hostname: target.address,
+        family: target.family,
+        port: target.url.port || 443,
+        servername: host,
+        method: "POST",
+        path: `${target.url.pathname}${target.url.search}`,
+        headers: {
+          ...headers,
+          Host: target.url.host,
+          "Content-Length": Buffer.byteLength(body),
+        },
+        signal,
+        rejectUnauthorized: true,
+      },
+      (response) => {
+        response.resume();
+        resolve(response.statusCode || 0);
+      },
+    );
+    request.on("error", reject);
+    request.end(body);
+  });
+}
+
 async function deliverAnswerWebhook(
-  url: string,
+  target: ResolvedWebhook,
   body: string,
   headers: Record<string, string>,
   decisionId: string,
 ): Promise<void> {
+  // Two attempts, three seconds each, no redirects. The socket connects to the
+  // address that passed the public-internet check.
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body,
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-        redirect: "error",
-        cache: "no-store",
-      });
-      await response.body?.cancel();
-      if (response.ok) return;
+      const status = await postWebhook(target, body, headers, AbortSignal.timeout(TIMEOUT_MS));
+      if (status >= 200 && status < 300) return;
       console.warn("[Decisions] Answer webhook returned a non-success status.", {
         decisionId,
         attempt,
-        status: response.status,
+        status,
       });
     } catch {
       console.warn("[Decisions] Answer webhook request failed.", { decisionId, attempt });

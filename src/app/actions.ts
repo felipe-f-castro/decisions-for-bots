@@ -3,7 +3,12 @@
 import { redirect } from "next/navigation";
 import { getConfig } from "@/lib/config";
 import { getAccess } from "@/lib/auth";
-import { isEmailAllowed, updateWorkspaceSettings } from "@/lib/appwrite/settings";
+import {
+  isEmailAllowed,
+  isWorkspaceOwner,
+  getSettings,
+  updateWorkspaceSettings,
+} from "@/lib/appwrite/settings";
 import { completeSetup, setupIsLocked } from "@/lib/setup";
 import {
   clearSessionCookie,
@@ -11,15 +16,15 @@ import {
   createSessionAccount,
   writeSessionCookie,
 } from "@/lib/appwrite/session";
-import { isAppError, isWebUrl, parseAreas } from "@/lib/domain";
+import { isAppError, parseAreas } from "@/lib/domain";
 import { PASSWORD_MAX_BYTES, PASSWORD_MIN_LENGTH, passwordBytes } from "@/lib/password";
+import { assertLoginAllowed } from "@/lib/throttle";
+import { WEBHOOK_URL_ERROR, resolvePublicWebhook } from "@/lib/webhook-url";
 
 export type LoginState = { error?: string; sent?: boolean } | null;
 export type PasswordState = { error?: string; saved?: boolean } | null;
 export type SetupState =
-  | { error?: string }
-  | { complete: true; agentApiKey: string; webhookSecret: string }
-  | null;
+  { error?: string } | { complete: true; agentApiKey: string; webhookSecret: string } | null;
 
 const BAD_CREDENTIALS = "Email or password is incorrect.";
 
@@ -48,20 +53,33 @@ export async function signInWithPassword(
   if (!valid) return { error: "Enter a valid email address." };
   if (!password) return { error: "Enter your password." };
   if (passwordBytes(password) > PASSWORD_MAX_BYTES) return { error: BAD_CREDENTIALS };
+  let gate: { cancel: () => void };
+  try {
+    // Count the attempt before the admin-key session client, which bypasses upstream limits.
+    gate = await assertLoginAllowed(email);
+  } catch (error) {
+    if (isAppError(error)) return { error: error.message };
+    return { error: "Sign-in is temporarily unavailable. Please try again shortly." };
+  }
   try {
     if (!(await isEmailAllowed(email))) return { error: BAD_CREDENTIALS };
     const account = await createProjectAccount();
     const session = await account.createEmailPasswordSession({ email, password });
     if (!session.secret) {
+      gate.cancel();
       return { error: "Sign-in is temporarily unavailable. Please try again shortly." };
     }
+    gate.cancel();
     await writeSessionCookie(session.secret);
   } catch (error) {
     const message = String((error as { message?: string }).message || "");
+    if (isAppError(error) && error.status === 429) return { error: error.message };
     if (/rate limit|too many/i.test(message))
       return { error: "Too many sign-in attempts. Wait a few minutes and try again." };
-    if (isAppError(error) && error.status >= 500)
+    if (isAppError(error) && error.status >= 500) {
+      gate.cancel();
       return { error: "Sign-in is temporarily unavailable. Please try again shortly." };
+    }
     return { error: BAD_CREDENTIALS };
   }
   redirect("/");
@@ -115,13 +133,16 @@ export async function signOut() {
 export async function runSetup(_previous: SetupState, formData: FormData): Promise<SetupState> {
   if (getConfig().mock) redirect("/");
   try {
-    if (await setupIsLocked()) return { error: "This workspace already has an owner. Sign in instead." };
+    if (await setupIsLocked())
+      return { error: "This workspace already has an owner. Sign in instead." };
     const password = String(formData.get("password") || "");
     const confirm = String(formData.get("confirm") || "");
     if (password !== confirm) return { error: "The two passwords don’t match." };
     const result = await completeSetup({
       email: String(formData.get("email") || ""),
       password,
+      currentPassword: String(formData.get("currentPassword") || ""),
+      setupToken: String(formData.get("setupToken") || ""),
       areas: String(formData.get("areas") || ""),
       webhookUrl: String(formData.get("webhookUrl") || ""),
     });
@@ -141,7 +162,6 @@ export async function signInWithGoogle() {
   redirect("/login");
 }
 
-
 export type SettingsState = { error?: string; saved?: boolean } | null;
 
 export async function updateSettings(
@@ -157,11 +177,20 @@ export async function updateSettings(
   }
   if (access.kind !== "allowed") redirect("/login");
   try {
+    const settings = await getSettings();
+    if (!isWorkspaceOwner(access, settings))
+      return { error: "Only the workspace owner can change these settings." };
     const areas = parseAreas(String(formData.get("areas") || ""));
     const webhookUrl = String(formData.get("webhookUrl") || "").trim();
-    if (webhookUrl && !isWebUrl(webhookUrl))
-      return { error: "Use an HTTP or HTTPS webhook URL without credentials." };
-    await updateWorkspaceSettings({ areas, webhookUrl });
+    if (webhookUrl) {
+      try {
+        await resolvePublicWebhook(webhookUrl);
+      } catch (error) {
+        if (isAppError(error)) return { error: WEBHOOK_URL_ERROR };
+        throw error;
+      }
+    }
+    await updateWorkspaceSettings(access, { areas, webhookUrl });
     return { saved: true };
   } catch (error) {
     if (isAppError(error)) return { error: error.message };

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setPassword, signInWithPassword, signOut } from "@/app/actions";
+import { resetAuthThrottles } from "@/lib/throttle";
 import { demoEnv, appwriteEnv, user } from "./fixtures";
 
 const { account, session, allow } = vi.hoisted(() => ({
@@ -50,6 +51,7 @@ const BAD = { error: "Email or password is incorrect." };
 
 beforeEach(() => {
   appwriteEnv();
+  resetAuthThrottles();
   session.createProjectAccount.mockReturnValue(account);
   session.createSessionAccount.mockResolvedValue(account);
   session.writeSessionCookie.mockResolvedValue(undefined);
@@ -83,7 +85,10 @@ describe("password sign-in", () => {
   it("does not sign in when Appwrite omits the session secret", async () => {
     account.createEmailPasswordSession.mockResolvedValue({ secret: "" });
     expect(
-      await signInWithPassword(null, form({ email: "owner@example.com", password: "correct horse" })),
+      await signInWithPassword(
+        null,
+        form({ email: "owner@example.com", password: "correct horse" }),
+      ),
     ).toEqual({ error: "Sign-in is temporarily unavailable. Please try again shortly." });
     expect(session.writeSessionCookie).not.toHaveBeenCalled();
   });
@@ -122,14 +127,49 @@ describe("password sign-in", () => {
   it("maps a rate-limit failure to a friendly wait message", async () => {
     account.createEmailPasswordSession.mockRejectedValue(new Error("Rate limit exceeded"));
     expect(
-      await signInWithPassword(null, form({ email: "owner@example.com", password: "correct horse" })),
+      await signInWithPassword(
+        null,
+        form({ email: "owner@example.com", password: "correct horse" }),
+      ),
     ).toEqual({ error: "Too many sign-in attempts. Wait a few minutes and try again." });
+  });
+
+  it("stops calling the admin session client after repeated failures", async () => {
+    account.createEmailPasswordSession.mockRejectedValue(new Error("Invalid credentials"));
+    const fields = form({ email: "owner@example.com", password: "wrong password" });
+    for (let attempt = 0; attempt < 5; attempt++)
+      expect(await signInWithPassword(null, fields)).toEqual(BAD);
+    expect(await signInWithPassword(null, fields)).toEqual({
+      error: "Too many sign-in attempts. Wait a few minutes and try again.",
+    });
+    expect(account.createEmailPasswordSession).toHaveBeenCalledTimes(5);
+  });
+
+  it("limits concurrent admin session calls for one account", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    account.createEmailPasswordSession.mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      inFlight -= 1;
+      throw new Error("Invalid credentials");
+    });
+    const fields = form({ email: "burst@example.com", password: "wrong password" });
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => signInWithPassword(null, fields)),
+    );
+    expect(account.createEmailPasswordSession.mock.calls.length).toBeLessThanOrEqual(5);
+    expect(maxInFlight).toBeLessThanOrEqual(5);
+    expect(results.filter((result) => result?.error?.startsWith("Too many"))).toHaveLength(3);
   });
 });
 
 describe("set password", () => {
   it("requires the current password and matching copies of the new one", async () => {
-    expect(await setPassword(null, form({ password: "new password", confirm: "new password" }))).toEqual({
+    expect(
+      await setPassword(null, form({ password: "new password", confirm: "new password" })),
+    ).toEqual({
       error: "Enter your current password.",
     });
     expect(

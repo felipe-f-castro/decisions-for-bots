@@ -19,7 +19,10 @@ export function SettingsForm({ areas, webhookUrl }: { areas: string[]; webhookUr
         maxLength={2048}
         placeholder="https://example.com/hooks/decisions"
       />
-      <p className="field-hint">Leave blank to turn off delivery. The secret is not shown again.</p>
+      <p className="field-hint">
+        Leave blank to turn delivery off. Public HTTPS only, with no credentials. The signing secret
+        is not shown again.
+      </p>
       {state?.error && (
         <p className="form-error" role="alert">
           {state.error}

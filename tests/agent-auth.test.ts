@@ -30,7 +30,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("authorizeAgent", () => {
-  it("accepts the hashed key from settings and falls back to AGENT_API_KEY", async () => {
+  it("accepts only the hashed key once one is stored", async () => {
     appwriteEnv();
     settings.getSettings.mockResolvedValue({
       setupComplete: true,
@@ -39,7 +39,26 @@ describe("authorizeAgent", () => {
     await expect(authorizeAgent(request(stored))).resolves.toBeUndefined();
     await expect(authorizeAgent(request("wrong-token"))).rejects.toMatchObject({ status: 401 });
     vi.stubEnv("AGENT_API_KEY", fallback);
+    vi.stubEnv("AGENT_API_KEY_FALLBACK", "1");
+    await expect(authorizeAgent(request(fallback))).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("uses the environment key only before a database credential exists, and only when enabled", async () => {
+    appwriteEnv();
+    settings.getSettings.mockResolvedValue({ setupComplete: false, agentApiKeyHash: "" });
+    vi.stubEnv("AGENT_API_KEY", fallback);
+    await expect(authorizeAgent(request(fallback))).rejects.toMatchObject({ status: 401 });
+    vi.stubEnv("AGENT_API_KEY_FALLBACK", "1");
     await expect(authorizeAgent(request(fallback))).resolves.toBeUndefined();
+    await expect(authorizeAgent(request("wrong-token"))).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("fails closed when settings cannot be read, even if the environment key matches", async () => {
+    appwriteEnv();
+    settings.getSettings.mockRejectedValue(new Error("settings unavailable"));
+    vi.stubEnv("AGENT_API_KEY", fallback);
+    vi.stubEnv("AGENT_API_KEY_FALLBACK", "1");
+    await expect(authorizeAgent(request(fallback))).rejects.toMatchObject({ status: 503 });
   });
 
   it("uses the environment key in demo mode", async () => {

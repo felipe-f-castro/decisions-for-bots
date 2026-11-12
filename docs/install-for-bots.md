@@ -74,7 +74,7 @@ Set only:
 - `NEXT_PUBLIC_APPWRITE_PROJECT_ID` — the project ID
 - `APPWRITE_API_KEY` — the server key from step 2
 
-Leave `AGENT_API_KEY`, `DECISION_WEBHOOK_URL`, and `DECISION_WEBHOOK_SECRET` blank. `/setup` creates the agent key and webhook secret.
+Leave `AGENT_API_KEY`, `DECISION_WEBHOOK_URL`, and `DECISION_WEBHOOK_SECRET` blank. Set `SETUP_TOKEN` to a long random value (`openssl rand -base64 32`) in `.env.local` only. `/setup` creates the agent key and webhook secret. Unset `SETUP_TOKEN` after setup. Do not set `AGENT_API_KEY_FALLBACK` unless you intentionally want the env key to work before a database hash exists. After setup, the stored hash is the only agent credential.
 
 ## 4. Link the CLI
 
@@ -111,10 +111,11 @@ The site definition in `appwrite.config.json` is:
 - Build: `npm run build`
 - Output: `./.next`
 
-Set **only** these Site environment variables (public, safe for the browser):
+Set these Site environment variables:
 
 - `NEXT_PUBLIC_APPWRITE_ENDPOINT`
 - `NEXT_PUBLIC_APPWRITE_PROJECT_ID`
+- `SETUP_TOKEN` — server only, never `NEXT_PUBLIC_`. Remove it after `/setup`.
 
 Do **not** set `APPWRITE_API_KEY` as a Site variable. On Appwrite Sites, an ephemeral `x-appwrite-key` is injected at request time. Putting the server key in Site variables risks exposing it in a build log.
 
@@ -153,31 +154,33 @@ Confirm the setup page is reachable:
 curl -sI "https://<hex>.appwrite.network/setup"
 ```
 
-Expect HTTP 200, no redirect. The HTML title is “Decisions · A little clarity”. The page is the first-run form: owner email, password, repeat password, decision areas, optional webhook URL, and the button “Create owner and finish setup”.
+Expect HTTP 200, no redirect. The HTML title is “Decisions · A little clarity”. The page is the first-run form: installation token, owner email, password, repeat password, current Appwrite password (only if that account already exists), decision areas, optional webhook URL, and the button “Create owner and finish setup”.
 
 ## 8. First-run `/setup`
 
 1. Open `https://<hex>.appwrite.network/setup`.
-2. Owner email: the **user's** address. Do not hard-code an example email into a public file.
-3. Password: at least 10 and at most 72 characters. Collect it with a secure form or the user's vault. Do not invent one. Do not print it.
-4. Decision areas: comma-separated, up to 12 names, 40 characters each. Ask the user, or leave the form default.
-5. Webhook URL: optional. Leave blank unless the user already has a receiver. The field must be an HTTP or HTTPS URL without credentials.
-6. Submit **Create owner and finish setup**. Do not complete setup just to “try it” without the user's email and a password they chose.
+2. Installation token: the `SETUP_TOKEN` from the server environment. Do not invent one and do not write it into the repo.
+3. Owner email: the **user's** address. Do not hard-code an example email into a public file.
+4. Password: at least 10 and at most 72 characters. Collect it with a secure form or the user's vault. Do not invent one. Do not print it.
+5. If that email already exists in the Appwrite project, enter its current password. Setup will not replace an existing password unless that current password is correct.
+6. Decision areas: comma-separated, up to 12 names, 40 characters each. Ask the user, or leave the form default.
+7. Webhook URL: optional. Leave blank unless the user already has a receiver. The field must be a public HTTPS URL without credentials.
+8. Submit **Create owner and finish setup**. Do not complete setup just to “try it” without the user's email and a password they chose.
 
-The page then shows the **agent API key** and **webhook secret once**. Copy them into a secret store. They will not be shown again. The page then locks; later visits go to `/login`. After this, unknown emails cannot sign up. The owner is created already verified, so no confirmation email is required.
+The page then shows the **agent API key** and **webhook secret once**. Copy them into a secret store. They will not be shown again. The page then locks; later visits go to `/login`. After this, unknown emails cannot sign up. The owner is created already verified, so no confirmation email is required. Unset `SETUP_TOKEN` so it is not left on the server.
 
-If setup returns “This workspace already has an owner,” sign in at `/login` instead. Do not reset or overwrite the owner unless the user asked.
+If setup returns “This workspace already has an owner,” sign in at `/login` instead. Do not reset or overwrite the owner unless the user asked. Only the owner can change the webhook URL later. The signing secret is not shown on the settings page.
 
 ## 9. Connect an assistant and test
 
 Point the assistant at the new HTTPS origin only. Paths and payloads stay the same as the previous edition.
 
 - Base URL: `https://<hex>.appwrite.network`
-- `Authorization: Bearer <agent API key>` on `/api/agent/*`
+- `Authorization: Bearer <agent API key from /setup>` on `/api/agent/*`. After setup, that stored hash is the only accepted credential. `AGENT_API_KEY` is not accepted beside it. To rotate or revoke, replace `agent_api_key_hash` with the SHA-256 hex digest of the new token (or clear it). Unset `AGENT_API_KEY` and `AGENT_API_KEY_FALLBACK` so an old env value cannot become valid if the hash is cleared.
 - Create: `POST /api/agent/decisions` with JSON (`question`, `area`, optional `context`, `options`, `waitingOn`, `deadline`, `imageUrls`) or multipart (`decision` JSON plus `images` files)
 - List or read: `GET /api/agent/decisions`, `GET /api/agent/decisions/:id`
 - Mark an answered card as picked up: `POST /api/agent/decisions/:id/route` with `{ "expectedRevision": "<revision>" }`. **`expectedRevision` must be a string** (for example `"2"`), not a JSON number. A number returns an error such as “Decision version must be text.”
-- Optional webhook: event name `decision.answered`. Headers: `X-Decisions-Event`, `X-Decisions-Signature: sha256=<hex>` of the raw body, `Authorization: Bearer <webhook secret>`. Delivery is attempted twice, with a 3 second timeout, and never follows redirects. JSON fields include `id`, `question`, `area`, `waiting_on`, `answer`, `custom_answer`, `answered_at`.
+- Optional webhook: event name `decision.answered`. Headers: `X-Decisions-Event`, `X-Decisions-Signature: sha256=<hex>` of the raw body, `Authorization: Bearer <webhook secret>`. The URL must be public HTTPS with no credentials. Delivery is attempted twice, with a 3 second timeout, and never follows redirects. JSON fields include `id`, `question`, `area`, `waiting_on`, `answer`, `custom_answer`, `answered_at`.
 
 Run a side-by-side test before moving any production cards: create a test card, answer it in the UI, confirm a webhook if one is configured, call `/route` with the revision as text, then delete the test card. Do not change a previous live deployment (for example a Vercel + Supabase site) until the user agrees to cut over.
 
@@ -190,20 +193,20 @@ npm run typecheck
 npm run lint
 ```
 
-To try the UI without Appwrite, leave the Appwrite variables unset and run `npm run dev`. That starts a temporary in-memory inbox that resets when the process stops.
+To try the UI without Appwrite, leave the Appwrite variables unset, set `DECISIONS_DEMO=1`, and run `npm run dev`. That is refused when `NODE_ENV=production`. It starts a temporary in-memory inbox that resets when the process stops and does not send webhooks.
 
 ## Troubleshooting
 
-| Symptom | What to do |
-| --- | --- |
-| `appwrite push table` fails on columns | Add `collections.write` to the server key and retry, or create columns with TablesDB. |
-| `appwrite push site` fails on permission | Add `sites.read`, `sites.write`, and `log.read` (`log.read`, not `logs.read`). |
+| Symptom                                  | What to do                                                                                                                           |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `appwrite push table` fails on columns   | Add `collections.write` to the server key and retry, or create columns with TablesDB.                                                |
+| `appwrite push site` fails on permission | Add `sites.read`, `sites.write`, and `log.read` (`log.read`, not `logs.read`).                                                       |
 | Site is built but there is no public URL | Add `rules.read` and `rules.write`, then run `appwrite push site --force --site-id decisions-app --no-code`. Do not invent a domain. |
-| `create-site-rule` asks for `domain` | That API is custom-domain only. Stop unless the user gave a domain they own. |
-| Preview hostname asks for org sign-in | That is not the public URL. Use the generated `https://<hex>.appwrite.network` rule instead. |
-| `http://` returns 500 | Use `https://`. |
-| `/setup` is not a form | Confirm the deployment is active, public env vars are set, and you are on the generated HTTPS domain. |
-| Agent `/route` rejects the body | Send `expectedRevision` as a string. |
+| `create-site-rule` asks for `domain`     | That API is custom-domain only. Stop unless the user gave a domain they own.                                                         |
+| Preview hostname asks for org sign-in    | That is not the public URL. Use the generated `https://<hex>.appwrite.network` rule instead.                                         |
+| `http://` returns 500                    | Use `https://`.                                                                                                                      |
+| `/setup` is not a form                   | Confirm the deployment is active, public env vars are set, and you are on the generated HTTPS domain.                                |
+| Agent `/route` rejects the body          | Send `expectedRevision` as a string.                                                                                                 |
 
 ## What not to do
 
